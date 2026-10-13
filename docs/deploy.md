@@ -8,19 +8,50 @@ or duplicate send. Sends are also gated inside the app to the 09:00-10:00 IST wi
 > **Changing the send window is two changes.** The window in Settings only gates sends inside the app; it does not move the
 > Scheduler cron. Sends happen only if a tick fires inside the window, so a new window also needs a new Terraform
 > `send_window_schedule` (`infra/variables.tf`) and, to keep follow-ups flowing, sweep crons within `SWEEP_MAX_AGE_MINUTES`
-> before it. Otherwise nothing sends (ticks outside the window are refused).
-Infrastructure is Terraform (`infra/`), images and traffic are GitHub Actions (`.github/workflows/deploy.yml`).
+> before it (`SWEEP_MAX_AGE_MINUTES` lives in `deploy/backend.env.yaml`). Otherwise nothing sends (ticks outside the window are refused).
+Infrastructure is Terraform (`infra/`); images, traffic and the runtime config are GitHub Actions (`.github/workflows/deploy.yml`).
+
+**Current state: LIVE.** Project `codecell-vesit`, `asia-south1`, repository `Harshavardhan-28/Mail-autosender-service`.
+`DRY_RUN=false`, Scheduler jobs enabled.
+
+* Backend: https://mail-backend-177290233934.asia-south1.run.app
+* Web: https://mail-web-177290233934.asia-south1.run.app
+
+## Who owns what
+
+| Owner | What |
+| --- | --- |
+| Terraform (`infra/`, applied by hand) | Cloud Run service shells (name, ingress, service account, public invoker IAM), jobs, Scheduler jobs, Secret Manager containers and IAM, Artifact Registry, WIF, alerts, uptime check, optional budget. `ignore_changes = [template, traffic, client, client_version]` on both services, so it never touches a revision. |
+| Deploy workflow (`deploy.yml`) | Images, traffic split, and the whole runtime config of both services: env vars (`deploy/backend.env.yaml`, `deploy/web.env.yaml`, which REPLACE the service env on every deploy), secret references (`BACKEND_SECRETS` in the workflow), CPU/memory, timeout, concurrency, min/max instances, port, probes. |
+| Secret Manager | Secret values (never in git or Terraform state). |
+
+Why: Terraform and the workflow used to both write the services. Terraform re-sent the revision name CI had created and got
+`409 Revision ... with different configuration already exists`, so a config change (such as `DRY_RUN`) could not be applied
+by Terraform. One writer per setting removes that.
+
+**Change a setting** (for example `DRY_RUN`, `DAILY_SEND_CAP`, `MAX_PER_TICK`): edit `deploy/backend.env.yaml`, open a PR
+(CI lints the file with `deploy/check-config.sh`), merge. A push that touches `deploy/**` is a full deploy (migrate, no-traffic
+revision, smoke test, traffic shift, rollback on failure); it respects the send-window guard. Quote every value (`"false"`).
+
+**Emergency lever**: pause the Scheduler jobs (section 6), or, if sending must stop at once and you cannot wait for a deploy,
+`gcloud run services update mail-backend --region $R --update-env-vars DRY_RUN=true`. That change is temporary: the next
+deploy re-applies the file, so also fix `deploy/backend.env.yaml` in a PR.
 
 Placeholders: `R=asia-south1`. Run `gcloud config set project codecell-vesit` first.
 
 ## 1. Bootstrap (one time)
 
 Follow [`infra/README.md`](../infra/README.md): state bucket, `terraform apply`, import the resume bucket, add secret values,
-set GitHub variables and the `production` environment. Then do the first-deploy checklist below.
+set GitHub variables and the `production` environment. Then do the go-live checklist below.
+Done for this project; kept for rebuilding the stack from scratch.
 
-## 2. First-deploy checklist
+## 2. Go-live checklist (history, and for a rebuild)
 
-Do these in order; do not skip ahead. The scheduler jobs start paused and `DRY_RUN=true`.
+The app is live; this is the order that was used and the order to follow for a fresh project. A fresh bootstrap starts with
+the Scheduler jobs paused; set `DRY_RUN: "true"` in `deploy/backend.env.yaml` for the very first deploy if you want a dry run
+first. Current state of this project: live with `DRY_RUN=false` and the Scheduler jobs enabled, so the go-live steps have been
+passed in effect; which individual checks were run was not recorded. Known still open: item 9 (`sweep_alert_enabled` is
+`false`) and item 10 (alert delivery test).
 
 1. **Secrets are real**: `gcloud secrets versions list <name>` shows a version newer than 1 for all six secrets
    (`mail-database-url`, `mail-gmail-user`, `mail-gmail-app-password`, `mail-session-secret`, `mail-admin-password`,
@@ -32,30 +63,18 @@ Do these in order; do not skip ahead. The scheduler jobs start paused and `DRY_R
    never print the value. Rotate the old Neon, admin and any leaked dev passwords first (section 4).
 2. **Deploy**: merge to `main`; approve the `production` environment. The workflow builds both images, runs the migrate job,
    smoke tests each new revision with no traffic, then shifts traffic.
-3. **Seed the admin**: `gcloud run jobs execute mail-seed-admin --region $R --wait`. Log in at the `web_url`
-   (`terraform output web_url`) and check the dashboard loads.
-4. **Verify the proxy hop count (mandatory, do not skip)**: `TRUST_PROXY` defaults to 2, but 3 is plausible (browser, Google
-   front end of mail-web, the Next rewrite, Google front end of mail-backend). A value that is too low puts every user in one
-   rate-limit/lockout bucket, so one attacker can lock the admin out; too high lets a client choose its own address with a
-   forged `X-Forwarded-For`. Test both directions with a username that does not exist (so the admin is never locked), against
-   the public `web_url`:
-
-   ```sh
-   WEB=$(terraform output -raw web_url)
-   jar=$(mktemp); tok=$(curl -s -c $jar $WEB/api/auth/csrf | jq -r .csrfToken)
-   # Too high? Each attempt claims a different client address. The limit (10 per 15 min) must still trip for YOUR address.
-   for i in $(seq 1 12); do
-     curl -s -o /dev/null -w '%{http_code} ' -b $jar -H "x-csrf-token: $tok" -H 'content-type: application/json' \
-       -H "x-forwarded-for: 203.0.113.$i" -d '{"username":"nobody-hop-test","password":"wrong-password-1"}' $WEB/api/auth/login
-   done; echo   # expect 401 x10 then 429. If it never reaches 429, the value is too high: lower trust_proxy_hops.
-   ```
-
-   Then, from a different network (phone on mobile data, within the same 15 minutes), attempt one wrong login the same way
-   (without the forged header). It must answer 401, not 429. A 429 there means every client shares one bucket (too low): raise
-   `trust_proxy_hops` (try 3). Change the value in `infra/terraform.tfvars` and `terraform apply`, then repeat both tests. The
-   first-deploy checklist is not finished until both pass.
-5. **Dry run through Scheduler**: unpause the tick and call it once inside 09:00-10:00 IST, or widen the window in
-   Settings > Send window for the test:
+3. **Seed the admin**: `gcloud run jobs execute mail-seed-admin --region $R --wait`. Log in at the web URL and check the
+   dashboard loads.
+4. **`TRUST_PROXY` (no verification step needed)**: it is `1` in `deploy/backend.env.yaml`, on purpose. The backend is
+   publicly reachable, so with `2` a direct caller could send its own `X-Forwarded-For` and pick its own rate-limit bucket.
+   With `1` Express uses the entry that Cloud Run's front end appended itself (the real peer), which a client cannot forge.
+   Consequence: through the web path (browser, `mail-web`, the Next rewrite, `mail-backend`) the backend sees `mail-web`'s
+   address, so all web logins share ONE per-IP bucket (10 failures per 15 minutes). That is accepted for a single-admin app:
+   the per-account lockout is the primary defence against password guessing, the IP limiter is a second layer. Do not raise
+   the value without re-deriving it; do not lower it to 0 (the `Secure` session cookie then never gets set behind TLS
+   termination). The old "mandatory hop-count test" assumed 2 and is obsolete.
+5. **Dry run through Scheduler** (only on a fresh stack with `DRY_RUN: "true"`): resume the tick and call it once inside
+   09:00-10:00 IST, or widen the window in Settings > Send window for the test:
 
    ```sh
    gcloud scheduler jobs resume send-window --location $R
@@ -64,21 +83,26 @@ Do these in order; do not skip ahead. The scheduler jobs start paused and `DRY_R
    ```
 
    Outside the window dry runs still work (they are never gated); real sends do not.
-6. **Auth check**: `curl -i -X POST $(terraform output -raw backend_url)/internal/tick` must answer 401 without a token.
-7. **Real send to yourself**: set `dry_run = false` in `infra/terraform.tfvars`, `terraform apply`, schedule one message to
-   your own address inside the window. Check the PDF resume from the bucket, signature, threading and the follow-up.
-   Set `dry_run = true` again if anything looks wrong.
+6. **Auth check**: `curl -i -X POST https://mail-backend-177290233934.asia-south1.run.app/internal/tick` must answer 401 without a token
+   (the deploy workflow also asserts this on every candidate revision).
+7. **Real send to yourself**: set `DRY_RUN: "false"` in `deploy/backend.env.yaml` via PR, let the deploy run, schedule one
+   message to your own address inside the window. Check the PDF resume from the bucket, signature, threading and the
+   follow-up. Set it back to `"true"` (PR) if anything looks wrong.
 8. **Unpause sweeps**: `for j in reply-sweep-0850 reply-sweep-1000 reply-sweep-1320 reply-sweep-1640 reply-sweep-2000; do gcloud scheduler jobs resume $j --location $R; done`.
    Reply from another account, run `gcloud scheduler jobs run reply-sweep-1000 --location $R`, and confirm the contact
    turns `replied` and follow-ups are cancelled.
-9. Set `sweep_alert_enabled = true` and apply, so a day without a good sweep pages you.
-10. Force a failure once (for example rename a secret reference in a scratch revision) to see the alert email arrive.
+9. Set `sweep_alert_enabled = true` and `terraform apply`, so a day without a good sweep pages you. (Still `false` in this
+   project's tfvars.)
+10. Force a failure once (for example rename a secret reference in a scratch revision) to see the alert email arrive. (Open.)
 
 ## 3. Roll back
 
 * **Normal**: a failed deploy rolls back by itself (traffic returns to the previous revisions; migrations are forward-only
   and stay applied, so keep migrations backwards compatible with the previous code).
-* **Manual, a known good commit**: GitHub > Actions > Deploy > Run workflow, enter the full 40-character `sha`. Its images
+* **Manual, a known good commit**: GitHub > Actions > Deploy > Run workflow, enter the full 40-character `sha`. This skips
+  CI (the commit was tested when it was merged) and uses that commit's `deploy/*.env.yaml`, so image and environment roll back
+  together (the secret list, resources, probes and scaling flags come from the workflow file on the ref you dispatch on); commits from before `deploy/` existed cannot be redeployed this way (use the terminal form). Without `sha`, a
+  manual run builds the selected ref and runs CI first. The images
   must still be in Artifact Registry (the 30 newest builds per image are never deleted, older ones go after 180 days;
   tag an image `release-<name>` to pin it forever:
   `gcloud artifacts docker tags add $R-docker.pkg.dev/codecell-vesit/mail-autosender/mail-backend:<sha> $R-docker.pkg.dev/codecell-vesit/mail-autosender/mail-backend:release-<name>`).
@@ -112,7 +136,7 @@ far below the app's own 120 s graceful shutdown and a send that can take up to 9
 in `sending`; `needs_review` stale recovery then flags it (a possible duplicate email, or a manual-review item). So the
 pipeline refuses to deploy between 08:55 and 10:15 IST (checked at the start and again just before traffic moves) unless a
 manual run sets `force=true`. A push that lands in that period fails the run with a clear message; re-run it after 10:15.
-Pushes that only change `docs/**` or `*.md` do not deploy at all.
+Pushes that only change `docs/**` or `*.md` do not deploy at all; a change under `deploy/**` does.
 
 ## 4. Rotate secrets
 
@@ -178,7 +202,9 @@ tick that is already running, and `DRY_RUN` is **not** an instant switch:
   (or `gcloud secrets versions disable <version> --secret mail-gmail-app-password` plus a new revision). Sends then fail with
   an auth error, which creates a send hold instead of mail.
 
-The `DRY_RUN` change makes Terraform differ from reality until you set `dry_run = true` in your tfvars and apply (or revert).
+A `gcloud run services update` change is an emergency override only: the next deploy re-applies `deploy/backend.env.yaml`
+and silently undoes it. Make the durable change in that file via PR. Terraform does not see runtime config at all, so there is
+no Terraform drift to reconcile.
 
 ## 7. Seed or reset the admin
 
@@ -189,7 +215,7 @@ migrations and clears any lockout:
 gcloud run jobs execute mail-seed-admin --region $R --wait
 ```
 
-Locked out? Same command. Forgot the username? `terraform output`/tfvars `admin_username`. To change the password, add a new
+Locked out? Same command. Forgot the username? `admin_username` in `infra/terraform.tfvars` (the seed-admin job's `ADMIN_USERNAME`). To change the password, add a new
 `mail-admin-password` version first.
 
 ## 8. Cost expectations
@@ -203,13 +229,21 @@ Roughly 1 to 3 USD per month, mostly Secret Manager and Cloud Scheduler line ite
 * Monitoring, Logging, uptime check (every 15 min, mail-web only): inside free allowances at this volume.
 * Neon and Gmail are billed separately (free tiers are enough for this load).
 
-The budget alert emails at 50% and 100% (and forecast 100%) of `budget_amount_usd` (default 10). Prices change: verify on the
+The budget alert (optional, see below) emails at 50% and 100% (and forecast 100%) of `budget_amount_usd` (default 10). Prices change: verify on the
 Google Cloud pricing pages before relying on these numbers.
+
+### Budget alert (optional, not created by Terraform here)
+
+Creating a budget needs **Billing Account Administrator** (or **Billing Budgets creator**) on the billing account; project
+owner is not enough, which is why the Terraform budget failed with an API 400. `billing_account_id` therefore defaults to
+empty and no budget resource exists. To get one anyway, either have a billing admin set `billing_account_id` in
+`infra/terraform.tfvars` and apply, or create it in the console: Billing > Budgets & alerts > Create budget, scope it to
+project `codecell-vesit`, amount 10 USD, thresholds 50% and 100% (plus forecasted 100%), notify the alert email.
 
 ## 9. Monitoring and alerts
 
 Email alerts go to `alert_email`: 5xx burst, backend ERROR logs, Scheduler job failures (more than one failed attempt of the same job within 30 minutes, so a transient failure that a retry fixes does not page you), a send hold or `needs_review` or
-failed messages (from the `internal_tick` log line), no successful sweep in about a day, `mail-web /login` down, and budget.
+failed messages (from the `internal_tick` log line), no successful sweep in about a day, `mail-web /login` down, and budget (if you created one).
 The dashboard also shows the send-hold banner. Useful commands:
 
 ```sh
@@ -224,3 +258,5 @@ gcloud scheduler jobs describe send-window --location $R
   without `id-token`, so they cannot authenticate to Google Cloud. Plan them locally (`terraform plan` in `infra/`) before
   merging. (Review item M6, accepted.)
 * Terraform apply is always run by the owner from a workstation; there is no apply workflow.
+* Probes, resources and the secret list are in `deploy.yml`, not Terraform; the Terraform service templates only matter on the
+  very first apply (a placeholder image) and are otherwise ignored.

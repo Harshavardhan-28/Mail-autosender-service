@@ -19,7 +19,7 @@ variable "state_bucket" {
 variable "github_repo" {
   description = "GitHub repository (owner/name) allowed to authenticate through Workload Identity Federation."
   type        = string
-  default     = "Harshavardhan-28/mail_autosend"
+  default     = "Harshavardhan-28/Mail-autosender-service"
 }
 
 variable "github_repository_id" {
@@ -55,7 +55,11 @@ variable "alert_email" {
 }
 
 variable "billing_account_id" {
-  description = "Billing account id (XXXXXX-XXXXXX-XXXXXX) for the budget alert. Empty = no budget resource."
+  description = <<-EOT
+    OPTIONAL. Billing account id (XXXXXX-XXXXXX-XXXXXX) for the budget alert. Empty (the default) = no budget resource.
+    Creating a budget needs Billing Account Administrator (or Billing Budgets creator) on the BILLING ACCOUNT, not just
+    project owner; without it the API answers 400. Create the budget in the console instead (infra/README.md).
+  EOT
   type        = string
   default     = ""
 }
@@ -96,87 +100,17 @@ variable "seed_placeholder_secret_versions" {
   default     = true
 }
 
-# --- Images (CI owns them after the first apply) -----------------------------------------------------------
+# --- Images and runtime config (GitOps: the deploy workflow owns them after the first apply, see deploy/) -----------------------------------------------------------
 variable "placeholder_image" {
-  description = "Public image used only for the first apply. CI deploys the real SHA-tagged images and Terraform ignores image changes."
+  description = "Public image used only for the first apply. The deploy workflow rolls out the real SHA-tagged images and runtime config; Terraform ignores the service template."
   type        = string
   default     = "us-docker.pkg.dev/cloudrun/container/hello"
-}
-
-# --- Application settings (Terraform owns config; CI owns images) ------------------------------------------
-variable "dry_run" {
-  description = "DRY_RUN for the backend. true records sends without contacting Gmail. Flip to false only after the first-deploy checklist."
-  type        = bool
-  default     = true
 }
 
 variable "admin_username" {
   description = "ADMIN_USERNAME for the one-off seed-admin job (the password lives in Secret Manager)."
   type        = string
   default     = "admin"
-}
-
-variable "from_name" {
-  description = "FROM_NAME display name recipients see."
-  type        = string
-  default     = ""
-}
-
-variable "daily_send_cap" {
-  description = "DAILY_SEND_CAP (real emails per rolling 24h)."
-  type        = number
-  default     = 100
-}
-
-variable "max_per_tick" {
-  description = "MAX_PER_TICK (messages claimed per worker tick)."
-  type        = number
-  default     = 5
-}
-
-variable "sweep_max_age_minutes" {
-  description = "SWEEP_MAX_AGE_MINUTES: follow-ups wait while the last good reply sweep is older than this."
-  type        = number
-  default     = 90
-}
-
-variable "tick_deadline_seconds" {
-  description = "INTERNAL_TICK_DEADLINE_SECONDS: longest one /internal/tick call keeps sending (must stay below the 900s Cloud Run timeout and well below the 600s scheduler attempt deadline: after the deadline one more send can still finish, up to 90s, so 480 + 90 stays under 600)."
-  type        = number
-  default     = 480
-}
-
-variable "trust_proxy_hops" {
-  description = <<-EOT
-    TRUST_PROXY for the backend: number of proxies that append to X-Forwarded-For in front of Express.
-    Browser -> mail-web (Cloud Run front end + Next rewrite) -> mail-backend (Cloud Run front end) is assumed to be 2, but 3 is
-    plausible. Verifying it is a MANDATORY first-deploy step (docs/deploy.md): too low puts every user (and an attacker) in
-    one rate-limit/lockout bucket, too high lets clients spoof their IP.
-  EOT
-  type        = number
-  default     = 2
-
-  validation {
-    condition     = var.trust_proxy_hops >= 0 && var.trust_proxy_hops <= 5
-    error_message = "trust_proxy_hops must be between 0 and 5."
-  }
-}
-
-variable "backend_max_instances" {
-  description = "Must stay 1: the send worker and the reply sweep are single-writer by design."
-  type        = number
-  default     = 1
-
-  validation {
-    condition     = var.backend_max_instances == 1
-    error_message = "mail-backend must run at most one instance (single-writer worker)."
-  }
-}
-
-variable "web_max_instances" {
-  description = "Upper bound for mail-web instances."
-  type        = number
-  default     = 3
 }
 
 variable "reply_sweep_schedules" {

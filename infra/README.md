@@ -2,8 +2,17 @@
 
 Everything for the Mumbai (`asia-south1`) deployment of project `codecell-vesit`: APIs, service accounts, Artifact Registry,
 Secret Manager containers, Cloud Run services and jobs, Cloud Scheduler, Workload Identity Federation for GitHub Actions,
-the resume bucket binding, alerts, uptime check and budget. Terraform owns configuration; GitHub Actions owns container
-images and traffic (`lifecycle { ignore_changes }` on image and traffic). Secret values never enter Terraform or its state.
+the resume bucket binding, alerts, uptime check and an optional budget. Repository: `Harshavardhan-28/Mail-autosender-service`.
+
+**Ownership (GitOps).** Terraform owns the Cloud Run service *shell* (name, ingress, service account, public invoker IAM) and
+everything around it. The deploy workflow owns the services' images, traffic and the whole runtime config: env vars come from
+`deploy/backend.env.yaml` and `deploy/web.env.yaml`, secret references, resources, probes, timeout, concurrency, scaling and
+port from `.github/workflows/deploy.yml`. Both services therefore carry
+`ignore_changes = [template, traffic, client, client_version]`, which stops Terraform and CI colliding on revisions (the old
+`409 Revision ... with different configuration already exists`). The `template` in `cloud_run.tf` is a bootstrap used only by
+the first apply (placeholder image). There are no Terraform variables for env vars (no `dry_run`, `trust_proxy_hops`,
+`daily_send_cap`, ...): to change `DRY_RUN` edit `deploy/backend.env.yaml` in a PR. Jobs `mail-migrate` / `mail-seed-admin`
+keep their config in Terraform (CI only swaps their image). Secret values never enter Terraform or its state.
 
 | File | What |
 | --- | --- |
@@ -11,11 +20,12 @@ images and traffic (`lifecycle { ignore_changes }` on image and traffic). Secret
 | `apis.tf` | Enabled APIs |
 | `iam.tf` | Service accounts and least-privilege roles (backend, web, migrate, scheduler-invoker, github-deployer, github-planner) |
 | `secrets.tf` | Secret containers, accessor bindings, optional placeholder version 1 |
-| `cloud_run.tf` | `mail-backend`, `mail-web`, jobs `mail-migrate` and `mail-seed-admin` |
+| `cloud_run.tf` | Service shells `mail-backend` and `mail-web` (template ignored), jobs `mail-migrate` and `mail-seed-admin` |
 | `scheduler.tf` | `send-window` and five `reply-sweep-*` jobs (Asia/Kolkata, OIDC) |
 | `wif.tf` | Workload Identity pool, two providers, impersonation bindings |
 | `bucket.tf` | Existing resume bucket (import) and the backend's `objectUser` binding |
-| `monitoring.tf` | Alert policies, log metric, uptime check, budget |
+| `monitoring.tf` | Alert policies, log metric, uptime check, optional budget |
+| `../deploy/` | Not Terraform: runtime env files applied by the deploy workflow, and `check-config.sh` (CI lint) |
 
 ## Bootstrap (one time, from a workstation)
 
@@ -43,7 +53,7 @@ Prerequisites: `gcloud` logged in as an owner of the project (`gcloud auth login
 
    ```sh
    cd infra
-   cp terraform.tfvars.example terraform.tfvars   # set alert_email, github_repository_id (gh api repos/OWNER/NAME --jq .id) and, if you want the budget, billing_account_id
+   cp terraform.tfvars.example terraform.tfvars   # set alert_email, github_repository_id (gh api repos/OWNER/NAME --jq .id) and, only if you can create budgets, billing_account_id
    terraform init
    ```
 
@@ -66,7 +76,8 @@ Prerequisites: `gcloud` logged in as an owner of the project (`gcloud auth login
 
    First apply uses a public placeholder image and a throwaway "placeholder" version 1 in every secret
    (`seed_placeholder_secret_versions`) so Cloud Run can start before real values exist. Scheduler jobs are created paused,
-   `DRY_RUN=true`. If an apply fails right after creating service accounts with a "does not exist" IAM error, re-run it
+   the services run a placeholder image until the first deploy (runtime config comes from `deploy/*.env.yaml`, set
+   `DRY_RUN: "true"` there for a dry first deploy). If an apply fails right after creating service accounts with a "does not exist" IAM error, re-run it
    (IAM propagation).
 
 6. **Add the real secret values** (read from stdin so they never reach shell history or state):
@@ -92,24 +103,38 @@ Prerequisites: `gcloud` logged in as an owner of the project (`gcloud auth login
    gh variable set WIF_PROVIDER_PLAN --body "$(terraform output -raw wif_provider_plan)"
    gh variable set PLAN_SA           --body "$(terraform output -raw planner_service_account)"
    gh variable set ALERT_EMAIL       --body you@example.com
-   gh variable set BILLING_ACCOUNT_ID --body XXXXXX-XXXXXX-XXXXXX   # or leave unset and empty-default
+   gh variable set BILLING_ACCOUNT_ID --body XXXXXX-XXXXXX-XXXXXX   # optional, see "Budget alert"; leave unset to skip
    ```
 
    Also in the repo settings: create environment `production` with yourself as required reviewer, and protect `main`
-   (pull request required; required status check `CI passed`).
+   (pull request required; required status check `CI passed`, which is the exact check run name on pull requests).
 
-8. First deploy: merge to `main` (or run the Deploy workflow). Continue with the first-deploy checklist in
-   [`docs/deploy.md`](../docs/deploy.md).
+8. First deploy: merge to `main` (or run the Deploy workflow). Continue with the go-live checklist in
+   [`docs/deploy.md`](../docs/deploy.md). (Done for this project: it is live.)
 
 ## Day-to-day
 
-* Config changes (env vars, schedules, alerts): edit `.tf`, open a PR (the `Terraform plan` workflow comments the diff),
+* Infrastructure changes (schedules, alerts, IAM): edit `.tf`, open a PR (the `Terraform plan` workflow comments the diff),
   merge, then `terraform apply` locally. CI deliberately has no apply identity.
-* Image rollouts are never Terraform's job. After a rollback to a pinned revision, a Terraform-created revision will not
-  take traffic until you run `gcloud run services update-traffic <svc> --to-latest`.
+* Runtime changes (env vars such as `DRY_RUN`, resources, probes, secret references): edit `deploy/*.env.yaml` or
+  `deploy.yml` in a PR; merging deploys them. Terraform never sees them, so there is nothing to apply and no drift.
+* Image rollouts are never Terraform's job. After a rollback to a pinned revision, run
+  `gcloud run services update-traffic <svc> --to-latest` (the next deploy does it too).
 * `terraform plan` in CI uses `-refresh=false -lock=false` (config vs state; the read-only identity cannot read secret
-  payloads or resources, and needs no state write). Run a full `terraform plan` locally now and then to see drift.
-* Scheduler `paused` is only honoured at creation. Pause/resume with `gcloud scheduler jobs pause|resume <name>`.
+  payloads or resources, and needs no state write). Run a full `terraform plan` locally now and then to see drift; against
+  the live project it reports `No changes`.
+* Scheduler `paused` is only honoured at creation. Pause/resume with `gcloud scheduler jobs pause|resume <name>`; that is also
+  the emergency stop for sending (`docs/deploy.md` section 6).
+
+## Budget alert (optional)
+
+`billing_account_id` defaults to empty, which creates no budget. Setting it makes Terraform create a
+`google_billing_budget`, and that needs **Billing Account Administrator** or **Billing Budgets creator** on the billing
+account itself (project owner is not enough; without it the API answers 400, which is what happened here). Either get a billing
+admin to run the apply with `billing_account_id = "XXXXXX-XXXXXX-XXXXXX"` (`gcloud billing accounts list`), or skip Terraform
+and create the budget in the console: Billing > Budgets & alerts > Create budget, scope to project `codecell-vesit`, 10 USD
+per month, thresholds 50% and 100% (and forecasted 100%), email to the alert address. The plan workflow's
+`BILLING_ACCOUNT_ID` variable can stay unset.
 
 ## Notes and limits
 

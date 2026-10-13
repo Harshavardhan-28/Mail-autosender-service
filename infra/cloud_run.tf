@@ -1,33 +1,18 @@
 locals {
   # Cloud Run's deterministic service URL (https://<service>-<project number>.<region>.run.app). Computing it up front
-  # avoids a self-reference (INTERNAL_AUDIENCE must equal the service's own URL) and a two-step bootstrap.
+  # avoids a self-reference (the scheduler's OIDC audience must equal the service's own URL) and a two-step bootstrap.
   backend_url = "https://mail-backend-${data.google_project.this.number}.${var.region}.run.app"
   web_url     = "https://mail-web-${data.google_project.this.number}.${var.region}.run.app"
 
   repo_path = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.images.repository_id}"
-
-  # Everything below is config Terraform owns. CI replaces only the image (see lifecycle blocks).
-  backend_env = merge(
-    {
-      NODE_ENV                       = "production"
-      WORKER_MODE                    = "scheduled"
-      INTERNAL_AUDIENCE              = local.backend_url
-      INTERNAL_INVOKER_SA            = google_service_account.scheduler_invoker.email
-      INTERNAL_TICK_DEADLINE_SECONDS = tostring(var.tick_deadline_seconds)
-      SEND_WINDOW_ENFORCED           = "true"
-      SWEEP_MAX_AGE_MINUTES          = tostring(var.sweep_max_age_minutes)
-      MIGRATE_ON_START               = "false" # the mail-migrate job runs before every rollout
-      RESUME_STORAGE                 = "gcs"
-      RESUME_BUCKET                  = google_storage_bucket.resumes.name
-      TRUST_PROXY                    = tostring(var.trust_proxy_hops)
-      DRY_RUN                        = tostring(var.dry_run)
-      DAILY_SEND_CAP                 = tostring(var.daily_send_cap)
-      MAX_PER_TICK                   = tostring(var.max_per_tick)
-    },
-    var.from_name == "" ? {} : { FROM_NAME = var.from_name },
-  )
 }
 
+# Terraform owns the service SHELL only: name, ingress, service account, IAM and (at creation) a bootstrap template.
+# The runtime configuration (image, env vars, secret references, resources, probes, timeout, concurrency, scaling bounds)
+# is GitOps: it lives in deploy/*.env.yaml and the flags in .github/workflows/deploy.yml, and every deploy applies it.
+# `ignore_changes = [template]` is what stops the two writers colliding (Terraform re-sending a revision name that the
+# deploy workflow had already created is a 409 "Revision ... with different configuration already exists").
+# The template below therefore only matters on the very first apply.
 resource "google_cloud_run_v2_service" "backend" {
   project             = var.project_id
   name                = "mail-backend"
@@ -36,79 +21,24 @@ resource "google_cloud_run_v2_service" "backend" {
   deletion_protection = var.deletion_protection
 
   template {
-    service_account                  = google_service_account.backend.email
-    timeout                          = "900s"
-    max_instance_request_concurrency = 4
+    service_account = google_service_account.backend.email
 
     scaling {
       min_instance_count = 0
-      max_instance_count = var.backend_max_instances
+      max_instance_count = 1 # single-writer worker; the deploy workflow enforces the same bound
     }
 
     containers {
       image = var.placeholder_image
-
-      # The container listens on $PORT (injected by Cloud Run from this value).
       ports {
         container_port = 8080
-      }
-
-      resources {
-        limits = {
-          cpu    = "1"
-          memory = "512Mi"
-        }
-        cpu_idle          = true # CPU only while a request is open: /internal/* calls are request-bound
-        startup_cpu_boost = true
-      }
-
-      dynamic "env" {
-        for_each = local.backend_env
-        content {
-          name  = env.key
-          value = env.value
-        }
-      }
-
-      dynamic "env" {
-        for_each = toset(local.backend_secret_env)
-        content {
-          name = env.value
-          value_source {
-            secret_key_ref {
-              secret  = google_secret_manager_secret.app[env.value].secret_id
-              version = "latest"
-            }
-          }
-        }
-      }
-
-      startup_probe {
-        initial_delay_seconds = 0
-        period_seconds        = 5
-        timeout_seconds       = 3
-        failure_threshold     = 12
-        http_get {
-          path = "/healthz"
-        }
-      }
-
-      liveness_probe {
-        period_seconds    = 30
-        timeout_seconds   = 3
-        failure_threshold = 3
-        http_get {
-          path = "/healthz"
-        }
       }
     }
   }
 
-  # CI owns the image and the traffic split (no-traffic deploy, smoke test, shift, rollback). Terraform owns the rest.
   lifecycle {
     ignore_changes = [
-      template[0].containers[0].image,
-      template[0].revision,
+      template,
       traffic,
       client,
       client_version,
@@ -130,52 +60,24 @@ resource "google_cloud_run_v2_service" "web" {
   deletion_protection = var.deletion_protection
 
   template {
-    service_account                  = google_service_account.web.email
-    timeout                          = "60s"
-    max_instance_request_concurrency = 80
+    service_account = google_service_account.web.email
 
     scaling {
       min_instance_count = 0
-      max_instance_count = var.web_max_instances
+      max_instance_count = 3
     }
 
     containers {
       image = var.placeholder_image
-
       ports {
         container_port = 8080
-      }
-
-      resources {
-        limits = {
-          cpu    = "1"
-          memory = "512Mi"
-        }
-        cpu_idle          = true
-        startup_cpu_boost = true
-      }
-
-      env {
-        name  = "BACKEND_URL" # read by proxy.ts at run time; the /api/* rewrite was baked in at build time by CI
-        value = local.backend_url
-      }
-
-      startup_probe {
-        initial_delay_seconds = 0
-        period_seconds        = 5
-        timeout_seconds       = 3
-        failure_threshold     = 12
-        http_get {
-          path = "/login"
-        }
       }
     }
   }
 
   lifecycle {
     ignore_changes = [
-      template[0].containers[0].image,
-      template[0].revision,
+      template,
       traffic,
       client,
       client_version,
