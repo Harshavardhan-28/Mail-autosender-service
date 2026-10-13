@@ -100,8 +100,8 @@ passed in effect; which individual checks were run was not recorded. Known still
 * **Normal**: a failed deploy rolls back by itself (traffic returns to the previous revisions; migrations are forward-only
   and stay applied, so keep migrations backwards compatible with the previous code).
 * **Manual, a known good commit**: GitHub > Actions > Deploy > Run workflow, enter the full 40-character `sha`. This skips
-  CI (the commit was tested when it was merged) and uses that commit's `deploy/*.env.yaml`, so image and config roll back
-  together; commits from before `deploy/` existed cannot be redeployed this way (use the terminal form). Without `sha`, a
+  CI (the commit was tested when it was merged) and uses that commit's `deploy/*.env.yaml`, so image and environment roll back
+  together (the secret list, resources, probes and scaling flags come from the workflow file on the ref you dispatch on); commits from before `deploy/` existed cannot be redeployed this way (use the terminal form). Without `sha`, a
   manual run builds the selected ref and runs CI first. The images
   must still be in Artifact Registry (the 30 newest builds per image are never deleted, older ones go after 180 days;
   tag an image `release-<name>` to pin it forever:

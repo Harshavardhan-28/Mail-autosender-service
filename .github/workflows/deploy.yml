@@ -5,7 +5,8 @@ name: Deploy
 # after traffic moved rolls back automatically.
 # Manual run without `sha`: same as a push (CI runs first, then build and deploy).
 # Manual run with `sha`: redeploy (or roll back to) an already-built commit without rebuilding or re-testing. The runtime
-# config (deploy/*.env.yaml and the secret list below) is taken from THAT commit, so image and config roll back together.
+# environment (deploy/*.env.yaml) is taken from THAT commit, so image and env roll back together. The secret list, resources,
+# probes and scaling flags come from this workflow file on the ref you dispatch it on (normally main), not from the sha.
 #
 # GitOps runtime config: Terraform owns only the Cloud Run service shell (IAM, ingress, service account). Every deploy applies
 # the env vars from deploy/*.env.yaml (which REPLACE the service's env) plus the secret references, resources, timeout,
