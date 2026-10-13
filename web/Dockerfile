@@ -7,12 +7,12 @@
 # given at BUILD time; it is also set in the image for proxy.ts, which reads it at run time.
 # No secrets are involved: the browser only holds the backend's httpOnly session cookie.
 
-FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS deps
+FROM node:26-bookworm-slim@sha256:86f07bc9c5dce4578cf37e5a418b7bfc7f817cda25cde66e2b66e95ed86c4567 AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS build
+FROM node:26-bookworm-slim@sha256:86f07bc9c5dce4578cf37e5a418b7bfc7f817cda25cde66e2b66e95ed86c4567 AS build
 WORKDIR /app
 ARG BACKEND_URL
 RUN test -n "$BACKEND_URL" || (echo "BACKEND_URL build arg is required" >&2; exit 1)
@@ -21,7 +21,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
 
-FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS runtime
+FROM node:26-bookworm-slim@sha256:86f07bc9c5dce4578cf37e5a418b7bfc7f817cda25cde66e2b66e95ed86c4567 AS runtime
 # Security hardening of the runtime layer: pick up Debian security fixes published after the pinned
 # base image, and drop npm/npx (not used at runtime; its bundled dependencies trigger scanner findings).
 RUN apt-get update && apt-get upgrade -y --no-install-recommends \
