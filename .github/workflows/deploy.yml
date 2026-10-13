@@ -3,7 +3,14 @@ name: Deploy
 # Push to main: CI must pass, then (after the `production` environment approval, if configured) images are built, the
 # migrate job runs, each service gets a no-traffic revision that is smoke tested before taking traffic, and any failure
 # after traffic moved rolls back automatically.
-# Manual run with `sha`: redeploy (or roll back to) an already-built commit without rebuilding.
+# Manual run without `sha`: same as a push (CI runs first, then build and deploy).
+# Manual run with `sha`: redeploy (or roll back to) an already-built commit without rebuilding or re-testing. The runtime
+# config (deploy/*.env.yaml and the secret list below) is taken from THAT commit, so image and config roll back together.
+#
+# GitOps runtime config: Terraform owns only the Cloud Run service shell (IAM, ingress, service account). Every deploy applies
+# the env vars from deploy/*.env.yaml (which REPLACE the service's env) plus the secret references, resources, timeout,
+# concurrency, scaling and probes below. Changing any of them is a PR that touches deploy/** or this file; a config-only
+# change is a full deploy (migrate, no-traffic revision, smoke test, traffic shift, rollback on failure).
 #
 # Guards:
 #  * Docs-only pushes (docs/**, *.md) do not deploy.
@@ -22,6 +29,7 @@ on:
     paths-ignore:
       - "docs/**"
       - "**.md"
+      # deploy/** and infra/** are NOT ignored: a change under deploy/ is a config-only deploy.
   workflow_dispatch:
     inputs:
       sha:
@@ -43,7 +51,8 @@ permissions:
 
 jobs:
   ci:
-    if: github.event_name == 'push'
+    # Push, or a manual run that builds from source. Only a rollback of an already-tested image (explicit sha) skips CI.
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.sha == '') }}
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
@@ -51,8 +60,8 @@ jobs:
   deploy:
     name: Deploy to Cloud Run
     needs: [ci]
-    # Run after a green CI on push, or directly on a manual dispatch (CI is skipped there).
-    if: ${{ !cancelled() && (needs.ci.result == 'success' || (github.event_name == 'workflow_dispatch' && needs.ci.result == 'skipped')) }}
+    # Run after a green CI, or directly for a manual rollback/redeploy with an explicit sha (CI is skipped only then).
+    if: ${{ !cancelled() && (needs.ci.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.sha != '' && needs.ci.result == 'skipped')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: production
@@ -66,6 +75,8 @@ jobs:
       INPUT_FORCE: ${{ inputs.force }}
       EVENT_SHA: ${{ github.sha }}
       ALLOW_SECRET_VERSION_1: ${{ vars.ALLOW_SECRET_VERSION_1 }}
+      # Secret references (env var = Secret Manager secret:version). Replaced as a whole by --set-secrets on every deploy.
+      BACKEND_SECRETS: DATABASE_URL=mail-database-url:latest,GMAIL_USER=mail-gmail-user:latest,GMAIL_APP_PASSWORD=mail-gmail-app-password:latest,SESSION_SECRET=mail-session-secret:latest,SIGNATURE_HTML=mail-signature-html:latest
     steps:
       - name: Refuse to deploy while the send window is open
         run: |
@@ -99,11 +110,17 @@ jobs:
             echo "registry=${REGION}-docker.pkg.dev"
           } >> "$GITHUB_OUTPUT"
 
+      # Always check out the target commit: it supplies deploy/*.env.yaml (and the Dockerfiles when building).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: steps.target.outputs.build == 'true'
         with:
           ref: ${{ steps.target.outputs.sha }}
           persist-credentials: false
+
+      - name: Validate runtime config files
+        run: |
+          set -euo pipefail
+          [ -f deploy/backend.env.yaml ] && [ -f deploy/web.env.yaml ] || { echo "::error::commit ${{ steps.target.outputs.short }} has no deploy/*.env.yaml (it predates GitOps config); roll back with gcloud run services update-traffic instead (docs/deploy.md section 3)"; exit 1; }
+          bash deploy/check-config.sh
 
       - name: Authenticate to Google Cloud (Workload Identity Federation, no keys)
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
@@ -205,7 +222,17 @@ jobs:
           TAG: c${{ steps.target.outputs.short }}
         run: |
           set -euo pipefail
-          gcloud run deploy mail-backend --region "$REGION" --image "$IMAGE" --no-traffic --tag "$TAG" --quiet
+          # --env-vars-file and --set-secrets REPLACE the service's env and secret references, so the repo is the source of truth.
+          gcloud run deploy mail-backend --region "$REGION" --image "$IMAGE" --no-traffic --tag "$TAG" --quiet \
+            --service-account "mail-backend@${PROJECT}.iam.gserviceaccount.com" \
+            --env-vars-file deploy/backend.env.yaml \
+            --set-secrets "$BACKEND_SECRETS" \
+            --cpu 1 --memory 512Mi --cpu-throttling --cpu-boost \
+            --timeout 900 --concurrency 4 \
+            --min-instances 0 --max-instances 1 \
+            --port 8080 \
+            --startup-probe "initialDelaySeconds=0,periodSeconds=5,timeoutSeconds=3,failureThreshold=12,httpGet.path=/healthz,httpGet.port=8080" \
+            --liveness-probe "periodSeconds=30,timeoutSeconds=3,failureThreshold=3,httpGet.path=/healthz,httpGet.port=8080"
           rev="$(gcloud run services describe mail-backend --region "$REGION" --format='value(status.latestCreatedRevisionName)')"
           tag_url="$(gcloud run services describe mail-backend --region "$REGION" --format=json |
             jq -r --arg t "$TAG" '.status.traffic[] | select(.tag == $t) | .url')"
@@ -242,7 +269,15 @@ jobs:
           TAG: c${{ steps.target.outputs.short }}
         run: |
           set -euo pipefail
-          gcloud run deploy mail-web --region "$REGION" --image "$IMAGE" --no-traffic --tag "$TAG" --quiet
+          gcloud run deploy mail-web --region "$REGION" --image "$IMAGE" --no-traffic --tag "$TAG" --quiet \
+            --service-account "mail-web@${PROJECT}.iam.gserviceaccount.com" \
+            --env-vars-file deploy/web.env.yaml \
+            --clear-secrets \
+            --cpu 1 --memory 512Mi --cpu-throttling --cpu-boost \
+            --timeout 60 --concurrency 80 \
+            --min-instances 0 --max-instances 3 \
+            --port 8080 \
+            --startup-probe "initialDelaySeconds=0,periodSeconds=5,timeoutSeconds=3,failureThreshold=12,httpGet.path=/login,httpGet.port=8080"
           tag_url="$(gcloud run services describe mail-web --region "$REGION" --format=json |
             jq -r --arg t "$TAG" '.status.traffic[] | select(.tag == $t) | .url')"
           [ -n "$tag_url" ] || { echo "could not resolve candidate url" >&2; exit 1; }
