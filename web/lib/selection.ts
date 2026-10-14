@@ -21,18 +21,20 @@ export function buildPreviewRows(contacts: UploadedContact[], warnings: RowWarni
   });
 }
 
-const selectable = (rows: PreviewRow[]) => rows.filter((r) => !r.blocked);
+/** Only contacts still waiting to be scheduled can be picked (a reopened batch may be partly scheduled). */
+const canSelect = (r: PreviewRow) => !r.blocked && r.contact.status === "uploaded";
+const selectable = (rows: PreviewRow[]) => rows.filter(canSelect);
 
 /** Clean rows start selected; any row with a cross-batch warning needs an explicit tick. */
 export function initialSelection(rows: PreviewRow[]): string[] {
-  return rows.filter((r) => !r.blocked && !r.warning).map((r) => r.contact.id);
+  return rows.filter((r) => canSelect(r) && !r.warning).map((r) => r.contact.id);
 }
 
-/** Toggles one row, keeping table order. Blocked rows cannot be selected. */
+/** Toggles one row, keeping table order. Blocked or already-scheduled rows cannot be selected. */
 export function toggle(rows: PreviewRow[], selected: string[], id: string): string[] {
   const set = new Set(selected);
   if (set.has(id)) set.delete(id);
-  else if (rows.some((r) => r.contact.id === id && !r.blocked)) set.add(id);
+  else if (rows.some((r) => r.contact.id === id && canSelect(r))) set.add(id);
   return rows.filter((r) => set.has(r.contact.id)).map((r) => r.contact.id);
 }
 

@@ -26,7 +26,14 @@ import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
-type Props = { upload: UploadResult; resumes?: Resume[]; sendWindow?: SendWindowInfo | null; now?: () => Date };
+type Props = {
+  upload: UploadResult;
+  resumes?: Resume[];
+  sendWindow?: SendWindowInfo | null;
+  now?: () => Date;
+  /** An existing batch reopened from Contacts: no upload stepper and no CSV row numbers. */
+  reopened?: boolean;
+};
 
 type Outcome = {
   scheduled: number;
@@ -37,7 +44,7 @@ function SelectAll({ state, onChange }: { state: "none" | "some" | "all"; onChan
   return <Checkbox aria-label="Select all" checked={state === "all" ? true : state === "some" ? "indeterminate" : false} onCheckedChange={(v) => onChange(v === true)} />;
 }
 
-export function BatchScheduler({ upload, resumes = [], sendWindow = null, now = () => new Date() }: Props) {
+export function BatchScheduler({ upload, resumes = [], sendWindow = null, now = () => new Date(), reopened = false }: Props) {
   const rows = useMemo(() => buildPreviewRows(upload.contacts, upload.warnings), [upload]);
   const [selected, setSelected] = useState<string[]>(() => initialSelection(rows));
   const [sendAt, setSendAt] = useState("");
@@ -133,7 +140,7 @@ export function BatchScheduler({ upload, resumes = [], sendWindow = null, now = 
 
   return (
     <div>
-      <Stepper current={stepNow} />
+      {!reopened && <Stepper current={stepNow} />}
       <div className="space-y-5">
         {(upload.errors.length > 0 || upload.warnings.length > 0) && (
           <section className="space-y-3" aria-label="Import problems">
@@ -208,7 +215,7 @@ export function BatchScheduler({ upload, resumes = [], sendWindow = null, now = 
           </div>
 
           <Table className="md:min-w-[56rem]">
-            <caption className="sr-only">Imported contacts. Choose who to schedule, then set a send time below.</caption>
+            <caption className="sr-only">{reopened ? "Batch contacts" : "Imported contacts"}. Choose who to schedule, then set a send time below.</caption>
             <TableHeader>
               <TableRow className="hover:bg-transparent max-md:flex max-md:items-center">
                 <TableHead className="w-10 pl-4 max-md:flex max-md:w-auto max-md:items-center max-md:gap-2.5">
@@ -217,7 +224,7 @@ export function BatchScheduler({ upload, resumes = [], sendWindow = null, now = 
                     Select all
                   </span>
                 </TableHead>
-                <TableHead className="w-12 max-md:hidden">Row</TableHead>
+                {!reopened && <TableHead className="w-12 max-md:hidden">Row</TableHead>}
                 <TableHead className="max-md:hidden">Recipient</TableHead>
                 <TableHead className="max-md:hidden">Subject</TableHead>
                 <TableHead className="max-md:hidden">Status</TableHead>
@@ -244,7 +251,7 @@ export function BatchScheduler({ upload, resumes = [], sendWindow = null, now = 
                           onCheckedChange={() => setSelected((s) => toggle(rows, s, c.id))}
                         />
                       </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground max-md:hidden">{r.row}</TableCell>
+                      {!reopened && <TableCell className="font-mono text-xs text-muted-foreground max-md:hidden">{r.row}</TableCell>}
                       <TableCell className="max-w-64 max-md:block max-md:max-w-none max-md:px-4 max-md:py-1">
                         <div className="truncate font-medium">{c.person}</div>
                         <div className="truncate font-mono text-xs text-muted-foreground">{c.email}</div>
@@ -324,7 +331,7 @@ export function BatchScheduler({ upload, resumes = [], sendWindow = null, now = 
                     </TableRow>
                     {isOpen && (
                       <TableRow className="bg-muted/30 hover:bg-muted/30 max-md:block" id={`pv-${c.id}`}>
-                        <TableCell colSpan={7} className="px-4 pt-0 pb-4 max-md:block max-md:pt-3">
+                        <TableCell colSpan={reopened ? 6 : 7} className="px-4 pt-0 pb-4 max-md:block max-md:pt-3">
                           <EmailLetter label={`Email to ${c.email}`} to={c.email} subject={c.preview.subject} attachment={attachmentName(c)} body={c.preview.text} />
                         </TableCell>
                       </TableRow>
