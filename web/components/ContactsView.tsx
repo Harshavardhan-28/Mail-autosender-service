@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import Link from "next/link";
 import { CalendarClock, ChevronLeft, ChevronRight, Loader2, MoreHorizontal, Paperclip, Search, TriangleAlert, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { api, ApiError } from "@/lib/api";
@@ -372,6 +373,16 @@ export function ContactsView({ initialBatchId, initialStatus }: { initialBatchId
             {currentBatch ? `Batch “${currentBatch.name}” · ${plural(currentBatch.contactCount, "contact")}` : `All batches · ${plural(total, "contact")}`}
             {mode?.dryRun ? " · dry run: nothing is delivered" : ""}
           </>
+        }
+        actions={
+          currentBatch && (currentBatch.statusCounts.uploaded ?? 0) > 0 ? (
+            <Button size="sm" asChild>
+              <Link href={`/batches/${encodeURIComponent(currentBatch.id)}`}>
+                <CalendarClock />
+                Schedule this batch
+              </Link>
+            </Button>
+          ) : undefined
         }
       />
 

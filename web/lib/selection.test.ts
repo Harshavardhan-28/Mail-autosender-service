@@ -55,6 +55,11 @@ describe("selection", () => {
     expect(initialSelection(rows)).toEqual(["c", "d"]);
   });
 
+  it("starts with only uploaded rows selected, so a reopened batch skips contacts already scheduled", () => {
+    const reopened = buildPreviewRows([{ ...contact("a"), status: "scheduled" }, contact("b"), { ...contact("c"), status: "sent" }], []);
+    expect(initialSelection(reopened)).toEqual(["b"]);
+  });
+
   it("toggle keeps table order and never selects a blocked row", () => {
     let s = initialSelection(rows);
     s = toggle(rows, s, "b");

@@ -103,4 +103,17 @@ describe("ContactsView", () => {
     expect(await screen.findByText(/Attachment: General SWE/)).toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: /resume for/i })).toBeNull();
   });
+
+  it("offers to schedule the selected batch only while it still has contacts waiting", async () => {
+    const batch = (uploaded?: number) => ({ id: "b-1", name: "Spring", originalFilename: null, createdAt: "2030-01-01T00:00:00Z", contactCount: 3, statusCounts: uploaded ? { uploaded } : { scheduled: 3 } });
+    for (const [uploaded, expected] of [[2, true], [0, false]] as const) {
+      stubFetch((c) => (c.url === "/api/batches" ? json({ batches: [batch(uploaded)] }) : c.url === "/api/resumes" ? json({ resumes: [] }) : json({ contacts: [row], total: 1, page: 1, pageSize: 25 })));
+      const { unmount } = render(<ContactsView initialBatchId="b-1" />);
+      await screen.findByText(/Batch “Spring”/);
+      const link = screen.queryByRole("link", { name: "Schedule this batch" });
+      expect(!!link).toBe(expected);
+      if (link) expect(link).toHaveAttribute("href", "/batches/b-1");
+      unmount();
+    }
+  });
 });
