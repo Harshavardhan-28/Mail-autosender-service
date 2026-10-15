@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { Building2, CalendarClock, CheckCheck, ChevronLeft, ChevronRight, Inbox, RefreshCw, Search, TriangleAlert, Upload } from "lucide-react";
+import { CalendarClock, CheckCheck, ChevronLeft, ChevronRight, Inbox, RefreshCw, Search, TriangleAlert, Upload } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { formatAbsolute, formatRelative, plural } from "@/lib/format";
 import type { MailRow, MailsPage, MailTab, MessageKind } from "@/lib/types";
@@ -147,8 +147,6 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
-  // Company chips filter the rows already loaded (the API has no company filter).
-  const [company, setCompany] = useState("");
   const reload = useCallback(() => setTick((t) => t + 1), []);
   const desktop = useDesktop();
   const [selId, setSelId] = useState<string | null>(null);
@@ -204,9 +202,7 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
   const to = Math.min(page * PAGE_SIZE, total);
   const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const filtered = q !== "" || kind !== "";
-  const companies = data ? [...new Set(data.mails.map((m) => m.contact.company))].sort() : [];
-  const activeCompany = companies.includes(company) ? company : "";
-  const visible = data ? data.mails.filter((m) => !activeCompany || m.contact.company === activeCompany) : [];
+  const visible = data ? data.mails : [];
   const backTo = listQueryString({ tab, q, kind, page });
 
   const selected = desktop ? (visible.find((m) => m.id === selId) ?? visible[0] ?? null) : null;
@@ -214,7 +210,6 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
     setSearch("");
     setQ("");
     setKind("");
-    setCompany("");
     setPage(1);
   };
 
@@ -275,8 +270,7 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
                 if (key === tab) return;
                 autoPick.current = false;
                 setPage(1);
-                setCompany("");
-                setTab(key);
+                            setTab(key);
               }}
               className={cn(
                 "-mb-px inline-flex items-center gap-2 border-b-2 px-3 pt-3 pb-[11px] text-[13.5px] font-medium whitespace-nowrap transition-colors outline-none focus-visible:bg-accent",
@@ -298,32 +292,6 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
       </div>
 
       <div className="flex flex-wrap items-center gap-2 border-b bg-sidebar px-4 py-3 md:px-8">
-        <span className="mr-1 flex shrink-0 items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-          <Building2 aria-hidden="true" className="size-3.5" />
-          Company
-        </span>
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2" role="group" aria-label="Company">
-          {["", ...companies].map((c) => {
-            const on = activeCompany === c;
-            const n = c ? (data?.mails.filter((m) => m.contact.company === c).length ?? 0) : (data?.mails.length ?? 0);
-            return (
-              <button
-                key={c || "all"}
-                type="button"
-                aria-pressed={on}
-                onClick={() => setCompany(c)}
-                className={cn(
-                  "inline-flex h-[30px] items-center gap-[7px] rounded-full border px-[11px] text-[12.5px] font-medium whitespace-nowrap transition-colors",
-                  on ? "border-foreground bg-foreground text-background" : "bg-card hover:bg-accent",
-                )}
-              >
-                {c && <span aria-hidden="true" className={cn("size-2 rounded-[3px]", hueClass(c))} />}
-                {c || "All companies"}
-                <span className="opacity-65">{n}</span>
-              </button>
-            );
-          })}
-        </div>
         <div role="group" aria-label="Type" className="flex shrink-0 gap-0.5 rounded-lg bg-accent p-0.5">
           {(
             [
@@ -366,7 +334,6 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
           <div className="flex justify-between border-b px-[18px] py-2.5 text-xs text-muted-foreground">
             <span>
               {visible.length} {visible.length === 1 ? "mail" : "mails"}
-              {activeCompany ? ` · ${activeCompany}` : ""}
             </span>
             <span>Sorted by send time</span>
           </div>
@@ -382,7 +349,7 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
                 ))}
               </ul>
             ) : data && visible.length === 0 ? (
-              <Empty tab={tab} filtered={filtered || activeCompany !== ""} onClear={clearFilters} />
+              <Empty tab={tab} filtered={filtered} onClear={clearFilters} />
             ) : (
               data && (
                 <ul aria-label={`${TABS.find((t) => t.key === tab)!.label} mail`} className={cn(loading && "opacity-60")}>
