@@ -12,7 +12,7 @@ import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { EmailLetter } from "./EmailLetter";
 import { Notice } from "./Notice";
-import { PageHeader } from "./PageHeader";
+import { PageBody, PageHeader } from "./PageHeader";
 import { SendHoldBanner } from "./SendHoldBanner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -231,9 +231,9 @@ const TABS: { key: string; label: string; icon: LucideIcon; title: string; descr
 ];
 
 const THEMES: { value: ThemePref; label: string; bg: string; side: string; line: string }[] = [
-  { value: "light", label: "Light", bg: "#f6f6f9", side: "#111228", line: "#e1e2e8" },
-  { value: "dark", label: "Dark", bg: "#0b0b0d", side: "#0f1012", line: "#25262b" },
-  { value: "system", label: "Match system", bg: "linear-gradient(90deg,#f6f6f9 50%,#0b0b0d 50%)", side: "#111228", line: "#a0a3ae" },
+  { value: "light", label: "Light", bg: "bg-[#f6f6f9]", side: "bg-[#111228]", line: "bg-[#e1e2e8]" },
+  { value: "dark", label: "Dark", bg: "bg-[#0b0b0d]", side: "bg-[#0f1012]", line: "bg-[#25262b]" },
+  { value: "system", label: "Match system", bg: "bg-[linear-gradient(90deg,#f6f6f9_50%,#0b0b0d_50%)]", side: "bg-[#111228]", line: "bg-[#a0a3ae]" },
 ];
 
 function Appearance() {
@@ -249,11 +249,11 @@ function Appearance() {
           onClick={() => setPref(t.value)}
           className={cn("rounded-xl border-2 p-2.5 text-left transition-colors", pref === t.value ? "border-primary" : "border-border hover:border-input")}
         >
-          <span className="flex h-20 overflow-hidden rounded-lg" style={{ background: t.bg }}>
-            <span className="w-1/4" style={{ background: t.side }} />
+          <span className={cn("flex h-20 overflow-hidden rounded-lg", t.bg)}>
+            <span className={cn("w-1/4", t.side)} />
             <span className="flex flex-1 flex-col gap-1.5 p-2.5">
-              <span className="h-2 w-3/5 rounded-sm" style={{ background: t.line }} />
-              <span className="h-2 w-2/5 rounded-sm" style={{ background: t.line }} />
+              <span className={cn("h-2 w-3/5 rounded-sm", t.line)} />
+              <span className={cn("h-2 w-2/5 rounded-sm", t.line)} />
             </span>
           </span>
           <span className="mt-2 block text-[13px] font-medium">{t.label}</span>
@@ -267,10 +267,11 @@ export function SettingsView() {
   const [tab, setTab] = useState("sending");
   const current = TABS.find((t) => t.key === tab) ?? TABS[0]!;
   return (
-    <div className="mx-auto max-w-5xl">
+    <div>
       <PageHeader eyebrow="Account / Settings" title="Settings" />
+      <PageBody max="max-w-[1080px]">
       <div className="grid items-start gap-6 md:grid-cols-[13rem_minmax(0,1fr)] md:gap-7">
-        <nav aria-label="Settings sections" className="flex gap-0.5 overflow-x-auto md:sticky md:top-20 md:flex-col">
+        <nav aria-label="Settings sections" className="flex gap-0.5 overflow-x-auto md:sticky md:top-6 md:flex-col">
           {TABS.map(({ key, label, icon: Icon }) => {
             const on = key === tab;
             return (
@@ -304,6 +305,7 @@ export function SettingsView() {
           {tab === "account" && <PasswordForm />}
         </section>
       </div>
+      </PageBody>
     </div>
   );
 }

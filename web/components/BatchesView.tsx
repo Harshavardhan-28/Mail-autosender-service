@@ -6,8 +6,9 @@ import { CalendarClock, Layers, Upload } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { formatDay } from "@/lib/format";
 import type { BatchSummary } from "@/lib/types";
+import { Dyn } from "./Dyn";
 import { Notice } from "./Notice";
-import { PageHeader } from "./PageHeader";
+import { PageBody, PageHeader } from "./PageHeader";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -24,7 +25,7 @@ function BatchRow({ batch }: { batch: BatchSummary }) {
   const count = (keys: string[]) => keys.reduce((sum, k) => sum + (batch.statusCounts[k as keyof typeof batch.statusCounts] ?? 0), 0);
   const unscheduled = count(["uploaded"]);
   return (
-    <li className="grid items-center gap-x-6 gap-y-3 rounded-xl border bg-card px-5 py-4 md:grid-cols-[minmax(200px,1.2fr)_minmax(220px,2fr)_auto]">
+    <li className="grid items-center gap-x-6 gap-y-3 rounded-[14px] border bg-card px-5 py-4 md:grid-cols-[minmax(200px,1.2fr)_minmax(220px,2fr)_auto]">
       <div className="flex min-w-0 items-center gap-3">
         <span className="grid size-[38px] shrink-0 place-items-center rounded-[10px] bg-st-indigo-bg text-primary">
           <Layers aria-hidden="true" className="size-[17px]" />
@@ -42,7 +43,7 @@ function BatchRow({ batch }: { batch: BatchSummary }) {
       <div>
         <div className="flex h-2.5 overflow-hidden rounded-full bg-accent" role="img" aria-label={`${batch.contactCount} contacts`}>
           {SEGMENTS.map((s) => (
-            <span key={s.key} className={s.className} style={{ width: `${(count(s.keys) / n) * 100}%` }} />
+            <Dyn key={s.key} className={s.className} w={(count(s.keys) / n) * 100} />
           ))}
         </div>
         <p className="mt-2 flex flex-wrap gap-x-3.5 text-xs text-muted-foreground">
@@ -89,7 +90,7 @@ export function BatchesView() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div>
       <PageHeader
         eyebrow="Workspace / Batches"
         title="Batches"
@@ -103,6 +104,7 @@ export function BatchesView() {
           </Button>
         }
       />
+      <PageBody max="max-w-[1200px]" className="space-y-3">
       {error && (
         <Notice tone="danger" role="alert">
           {error}
@@ -124,6 +126,7 @@ export function BatchesView() {
           ))}
         </ul>
       )}
+      </PageBody>
     </div>
   );
 }

@@ -1,20 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { CalendarClock, CheckCheck, ChevronLeft, ChevronRight, Inbox, Search, TriangleAlert } from "lucide-react";
+import { Building2, CalendarClock, CheckCheck, ChevronLeft, ChevronRight, Inbox, RefreshCw, Search, TriangleAlert, Upload } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { formatAbsolute, formatRelative, plural } from "@/lib/format";
 import type { MailRow, MailsPage, MailTab, MessageKind } from "@/lib/types";
 import { useMode } from "./AppShell";
-import { MailChips } from "./MailChips";
+import { hueClass, initials } from "./Dyn";
+import { kindName } from "./MailChips";
+import { MailDetailView } from "./MailDetailView";
+import { StatusBadge } from "./StatusBadge";
 import { Notice } from "./Notice";
 import { OverdueBanner } from "./OverdueBanner";
 import { PageHeader } from "./PageHeader";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { NativeSelect } from "@/components/ui/native-select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -41,46 +41,61 @@ function describe(err: unknown): string {
   return err instanceof ApiError ? err.message : "Something went wrong. Try again.";
 }
 
-function When({ mail }: { mail: MailRow }) {
+const LG = "(min-width: 1024px)";
+function useDesktop() {
+  return useSyncExternalStore(
+    (cb) => {
+      const m = window.matchMedia?.(LG);
+      m?.addEventListener?.("change", cb);
+      return () => m?.removeEventListener?.("change", cb);
+    },
+    () => !!window.matchMedia?.(LG)?.matches,
+    () => false,
+  );
+}
+
+function MailItem({ mail, from, selected, onSelect }: { mail: MailRow; from: string; selected: boolean; onSelect?: () => void }) {
   const sent = mail.state === "sent";
   const at = sent ? (mail.sentAt ?? mail.scheduledFor) : mail.scheduledFor;
   const rel = formatRelative(at);
   const lead = sent ? "Sent" : mail.state === "sending" ? "Sending since" : mail.state === "needs_review" || mail.state === "failed" ? "Was due" : "Scheduled for";
-  return (
-    <div className="text-left sm:text-right">
-      <div className="text-[13px] font-medium">
-        {lead}
-        {rel ? ` ${rel}` : ""}
-      </div>
-      <time className="text-xs text-muted-foreground tabular-nums" dateTime={new Date(at).toISOString()}>
-        {formatAbsolute(at)}
-      </time>
-    </div>
-  );
-}
-
-function MailItem({ mail, from }: { mail: MailRow; from: string }) {
+  const c = mail.contact;
   return (
     <li>
       <Link
         href={`/mail/${encodeURIComponent(mail.id)}?from=${encodeURIComponent(from)}`}
+        aria-current={selected ? "true" : undefined}
+        onClick={(e) => {
+          if (onSelect && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+            e.preventDefault();
+            onSelect();
+          }
+        }}
         className={cn(
-          "group flex flex-col gap-2 px-4 py-3 outline-none transition-colors hover:bg-accent/60 focus-visible:bg-accent/60 focus-visible:ring-[3px] focus-visible:ring-ring/30 focus-visible:ring-inset sm:flex-row sm:items-start sm:justify-between sm:gap-6",
-          mail.overdue && "border-l-2 border-st-amber pl-3.5",
+          "flex gap-3 border-b px-[18px] py-3.5 outline-none transition-colors hover:bg-accent/50 focus-visible:bg-accent/50",
+          selected ? "bg-st-indigo-bg/60 shadow-[inset_3px_0_0_var(--primary)]" : "bg-card",
         )}
       >
-        <div className="min-w-0 space-y-0.5">
-          <div className="flex min-w-0 items-baseline gap-2">
-            <span className="truncate text-[13px] font-medium">{mail.contact.person}</span>
-            <span className="truncate text-xs text-muted-foreground">{mail.contact.company}</span>
+        <span className={cn("grid size-[34px] shrink-0 place-items-center rounded-[9px] text-[13px] font-[650] text-white", hueClass(c.company))}>{initials(c.person)}</span>
+        <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
+          <div className="flex items-baseline gap-2">
+            <span className="truncate text-[13.5px] font-semibold">{c.person}</span>
+            <span className="truncate text-xs whitespace-nowrap text-muted-foreground">{c.company}</span>
+            <time className="ml-auto text-xs whitespace-nowrap text-muted-foreground" dateTime={new Date(at).toISOString()} title={formatAbsolute(at)}>
+              {lead}
+              {rel ? ` ${rel}` : ""}
+            </time>
           </div>
           <div className="truncate text-[13px]">{mail.subject}</div>
-          <div className="truncate font-mono text-xs text-muted-foreground">{mail.contact.email}</div>
+          <div className="truncate font-mono text-xs text-muted-foreground">{c.email}</div>
           {mail.error && <div className="truncate text-xs text-destructive">{mail.error}</div>}
-        </div>
-        <div className="flex shrink-0 flex-col gap-1.5 sm:items-end">
-          <When mail={mail} />
-          <MailChips mail={mail} />
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <StatusBadge status={mail.state} />
+            <span className="rounded-md bg-secondary px-2 py-0.5 text-[11px] font-medium text-secondary-foreground">{kindName(mail.kind)}</span>
+            {c.status === "replied" && <span className="rounded-md bg-st-violet-bg px-2 py-0.5 text-[11px] font-semibold text-st-violet">Replied</span>}
+            {mail.overdue && <span className="rounded-md bg-st-amber-bg px-2 py-0.5 text-[11px] font-semibold text-st-amber">Overdue</span>}
+            {mail.dryRun && <span className="rounded-md bg-st-neutral-bg px-2 py-0.5 text-[11px] font-medium text-st-neutral">Dry run</span>}
+          </div>
         </div>
       </Link>
     </li>
@@ -135,6 +150,8 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
   // Company chips filter the rows already loaded (the API has no company filter).
   const [company, setCompany] = useState("");
   const reload = useCallback(() => setTick((t) => t + 1), []);
+  const desktop = useDesktop();
+  const [selId, setSelId] = useState<string | null>(null);
 
   // Search as you type, after a short pause.
   useEffect(() => {
@@ -192,22 +209,56 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
   const visible = data ? data.mails.filter((m) => !activeCompany || m.contact.company === activeCompany) : [];
   const backTo = listQueryString({ tab, q, kind, page });
 
+  const selected = desktop ? (visible.find((m) => m.id === selId) ?? visible[0] ?? null) : null;
+  const clearFilters = () => {
+    setSearch("");
+    setQ("");
+    setKind("");
+    setCompany("");
+    setPage(1);
+  };
+
   return (
-    <div>
+    <div className="flex min-h-svh flex-col lg:h-svh">
       <PageHeader
         eyebrow="Workspace / Mail"
         title="Mail"
-        description={
+        description={mode?.dryRun ? "Dry run: nothing is delivered." : undefined}
+        actions={
           <>
-            What has gone out, and what will.
-            {mode?.dryRun ? " Dry run: nothing is delivered." : ""}
+            <form
+              className="flex h-9 min-w-44 flex-1 items-center gap-2 rounded-lg border border-input bg-background px-3 text-[13px] text-muted-foreground sm:w-72 sm:flex-none"
+              role="search"
+              onSubmit={(e) => (e.preventDefault(), setPage(1), setQ(search.trim()))}
+            >
+              <Search aria-hidden="true" className="size-3.5 shrink-0" />
+              <input
+                type="search"
+                aria-label="Search"
+                maxLength={200}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search name, email, subject…"
+                className="min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground"
+              />
+            </form>
+            <Button variant="outline" asChild>
+              <Link href="/dashboard#replies">
+                <RefreshCw />
+                Check replies
+              </Link>
+            </Button>
+            <Button asChild>
+              <Link href="/upload">
+                <Upload />
+                Upload CSV
+              </Link>
+            </Button>
           </>
         }
       />
 
-      {tab === "scheduled" && <OverdueBanner className="mb-4" onRescheduled={reload} />}
-
-      <div role="tablist" aria-label="Mail" className="mb-4 inline-flex max-w-full overflow-x-auto rounded-lg border bg-muted/50 p-0.5">
+      <div role="tablist" aria-label="Mail" className="flex items-center gap-1 overflow-x-auto border-b bg-card px-4 md:px-8">
         {TABS.map(({ key, label }) => {
           const active = tab === key;
           const n = counts?.[key];
@@ -224,18 +275,19 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
                 if (key === tab) return;
                 autoPick.current = false;
                 setPage(1);
+                setCompany("");
                 setTab(key);
               }}
               className={cn(
-                "inline-flex h-8 items-center gap-2 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/30",
-                active ? "bg-card text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground",
+                "-mb-px inline-flex items-center gap-2 border-b-2 px-3 pt-3 pb-[11px] text-[13.5px] font-medium whitespace-nowrap transition-colors outline-none focus-visible:bg-accent",
+                active ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
               )}
             >
               {label}
               {n !== undefined && (
                 <span
                   data-slot="tab-count"
-                  className={cn("min-w-5 rounded-full px-1.5 text-center text-[11px] leading-5 tabular-nums", alert ? "bg-st-amber-bg text-st-amber" : "bg-muted text-muted-foreground")}
+                  className={cn("rounded-full px-[7px] text-[11px] leading-5 font-semibold tabular-nums", alert ? "bg-st-amber-bg text-st-amber" : active ? "bg-st-indigo-bg text-st-indigo" : "bg-secondary text-muted-foreground")}
                 >
                   {n}
                 </span>
@@ -245,37 +297,15 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
         })}
       </div>
 
-      <form className="mb-4 flex flex-wrap items-end gap-3" role="search" onSubmit={(e) => (e.preventDefault(), setPage(1), setQ(search.trim()))}>
-        <div className="min-w-56 flex-1 space-y-1.5">
-          <Label htmlFor="mail-q">Search</Label>
-          <div className="relative">
-            <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input id="mail-q" type="search" maxLength={200} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Name, company, email or subject" className="pl-8" />
-          </div>
-        </div>
-        <div className="w-44 space-y-1.5">
-          <Label htmlFor="mail-kind">Type</Label>
-          <NativeSelect
-            id="mail-kind"
-            value={kind}
-            onChange={(e) => {
-              setPage(1);
-              setKind(e.target.value as MessageKind | "");
-            }}
-          >
-            <option value="">All mail</option>
-            <option value="initial">First emails</option>
-            <option value="followup">Follow-ups</option>
-          </NativeSelect>
-        </div>
-      </form>
-
-      {companies.length > 1 && (
-        <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Company">
-          <span className="mr-1 text-xs font-semibold text-muted-foreground">Company</span>
+      <div className="flex flex-wrap items-center gap-2 border-b bg-sidebar px-4 py-3 md:px-8">
+        <span className="mr-1 flex shrink-0 items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+          <Building2 aria-hidden="true" className="size-3.5" />
+          Company
+        </span>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2" role="group" aria-label="Company">
           {["", ...companies].map((c) => {
             const on = activeCompany === c;
-            const n = c ? data!.mails.filter((m) => m.contact.company === c).length : data!.mails.length;
+            const n = c ? (data?.mails.filter((m) => m.contact.company === c).length ?? 0) : (data?.mails.length ?? 0);
             return (
               <button
                 key={c || "all"}
@@ -283,20 +313,45 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
                 aria-pressed={on}
                 onClick={() => setCompany(c)}
                 className={cn(
-                  "inline-flex h-[30px] items-center gap-1.5 rounded-full border px-3 text-[12.5px] font-medium whitespace-nowrap transition-colors",
+                  "inline-flex h-[30px] items-center gap-[7px] rounded-full border px-[11px] text-[12.5px] font-medium whitespace-nowrap transition-colors",
                   on ? "border-foreground bg-foreground text-background" : "bg-card hover:bg-accent",
                 )}
               >
+                {c && <span aria-hidden="true" className={cn("size-2 rounded-[3px]", hueClass(c))} />}
                 {c || "All companies"}
                 <span className="opacity-65">{n}</span>
               </button>
             );
           })}
         </div>
-      )}
+        <div role="group" aria-label="Type" className="flex shrink-0 gap-0.5 rounded-lg bg-accent p-0.5">
+          {(
+            [
+              ["", "All types"],
+              ["initial", "First emails"],
+              ["followup", "Follow-ups"],
+            ] as const
+          ).map(([k, label]) => (
+            <button
+              key={k}
+              type="button"
+              aria-pressed={kind === k}
+              onClick={() => {
+                setPage(1);
+                setKind(k);
+              }}
+              className={cn("rounded-md px-[11px] py-[5px] text-[12.5px] font-medium whitespace-nowrap", kind === k ? "bg-card text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground")}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {tab === "scheduled" && <OverdueBanner className="mx-4 mt-4 md:mx-8" onRescheduled={reload} />}
 
       {error && (
-        <Notice tone="danger" role="alert" className="mb-4">
+        <Notice tone="danger" role="alert" className="mx-4 mt-4 md:mx-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <span>{error}</span>
             <Button size="sm" variant="outline" onClick={reload}>
@@ -306,51 +361,57 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
         </Notice>
       )}
 
-      <div role="tabpanel" id="mail-panel" aria-labelledby={`tab-${tab}`} className="rounded-lg border bg-card" aria-busy={loading}>
-        {!data && loading ? (
-          <ul aria-label="Loading mail" className="divide-y">
-            {[0, 1, 2, 3, 4].map((i) => (
-              <li key={i} className="space-y-1.5 px-4 py-3">
-                <Skeleton className="h-4 w-48" />
-                <Skeleton className="h-4 w-72 max-w-full" />
-                <Skeleton className="h-3 w-40" />
-              </li>
-            ))}
-          </ul>
-        ) : data && data.mails.length === 0 ? (
-          <Empty
-            tab={tab}
-            filtered={filtered}
-            onClear={() => {
-              setSearch("");
-              setQ("");
-              setKind("");
-              setPage(1);
-            }}
-          />
-        ) : (
-          data && (
-            <ul aria-label={`${TABS.find((t) => t.key === tab)!.label} mail`} className={cn("divide-y", loading && "opacity-60")}>
-              {visible.map((m) => (
-                <MailItem key={m.id} mail={m} from={backTo} />
-              ))}
-            </ul>
-          )
-        )}
-
-        <nav className="flex items-center justify-between gap-3 border-t px-4 py-2.5" aria-label="Pages">
-          <span className="text-xs text-muted-foreground tabular-nums">{total ? `${from}–${to} of ${plural(total, "mail", "mails")}` : ""}</span>
-          <div className="flex gap-1.5">
-            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-              <ChevronLeft />
-              Previous
-            </Button>
-            <Button variant="outline" size="sm" disabled={page >= lastPage} onClick={() => setPage((p) => p + 1)}>
-              Next
-              <ChevronRight />
-            </Button>
+      <div className="flex min-h-0 flex-1">
+        <div role="tabpanel" id="mail-panel" aria-labelledby={`tab-${tab}`} aria-busy={loading} className="flex min-h-0 w-full min-w-0 flex-col border-r bg-card lg:w-[470px] lg:flex-none">
+          <div className="flex justify-between border-b px-[18px] py-2.5 text-xs text-muted-foreground">
+            <span>
+              {visible.length} {visible.length === 1 ? "mail" : "mails"}
+              {activeCompany ? ` · ${activeCompany}` : ""}
+            </span>
+            <span>Sorted by send time</span>
           </div>
-        </nav>
+          <div className="min-h-0 flex-1 overflow-auto">
+            {!data && loading ? (
+              <ul aria-label="Loading mail" className="divide-y">
+                {[0, 1, 2, 3, 4].map((i) => (
+                  <li key={i} className="space-y-1.5 px-4 py-3">
+                    <Skeleton className="h-4 w-48" />
+                    <Skeleton className="h-4 w-72 max-w-full" />
+                    <Skeleton className="h-3 w-40" />
+                  </li>
+                ))}
+              </ul>
+            ) : data && visible.length === 0 ? (
+              <Empty tab={tab} filtered={filtered || activeCompany !== ""} onClear={clearFilters} />
+            ) : (
+              data && (
+                <ul aria-label={`${TABS.find((t) => t.key === tab)!.label} mail`} className={cn(loading && "opacity-60")}>
+                  {visible.map((m) => (
+                    <MailItem key={m.id} mail={m} from={backTo} selected={selected?.id === m.id} onSelect={desktop ? () => setSelId(m.id) : undefined} />
+                  ))}
+                </ul>
+              )
+            )}
+          </div>
+          <nav className="flex items-center justify-between gap-3 border-t px-4 py-2.5" aria-label="Pages">
+            <span className="text-xs text-muted-foreground tabular-nums">{total ? `${from}–${to} of ${plural(total, "mail", "mails")}` : ""}</span>
+            <div className="flex gap-1.5">
+              <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+                <ChevronLeft />
+                Previous
+              </Button>
+              <Button variant="outline" size="sm" disabled={page >= lastPage} onClick={() => setPage((p) => p + 1)}>
+                Next
+                <ChevronRight />
+              </Button>
+            </div>
+          </nav>
+        </div>
+        {desktop && (
+          <div className="min-w-0 flex-1 overflow-auto px-7 py-6">
+            {selected ? <MailDetailView key={selected.id} id={selected.id} embedded onChanged={reload} /> : <p className="pt-20 text-center text-[13px] text-muted-foreground">Select a mail to see it here.</p>}
+          </div>
+        )}
       </div>
     </div>
   );

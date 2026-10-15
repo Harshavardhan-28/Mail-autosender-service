@@ -82,10 +82,11 @@ describe("MailListView", () => {
     expect(within(first).getByText("Follow-up")).toBeInTheDocument();
     expect(within(first).getByText("Replied")).toBeInTheDocument();
     expect(within(first).getByText("Dry run")).toBeInTheDocument();
-    expect(within(first).getByText(/^Sent/)).toBeInTheDocument();
-    const second = screen.getAllByRole("link")[1]!;
+    expect(within(first).getByText("Sent", { selector: "[data-status]" })).toBeInTheDocument();
+    expect(within(first).getByText(/^Sent/, { selector: "time" })).toBeInTheDocument();
+    const second = within(first.closest("ul")!).getAllByRole("link")[1]!;
     expect(within(second).getByText("Overdue")).toBeInTheDocument();
-    expect(within(second).getByText(/^Scheduled for/)).toBeInTheDocument();
+    expect(within(second).getByText(/^Scheduled for/, { selector: "time" })).toBeInTheDocument();
   });
 
   it("switches tab, resets paging and keeps the URL in step", async () => {
@@ -105,7 +106,7 @@ describe("MailListView", () => {
     await screen.findByText("SWE role at Acme");
     await userEvent.type(screen.getByRole("searchbox", { name: "Search" }), "acme");
     await vi.waitFor(() => expect(mailCalls(seen).at(-1)).toBe("/api/mails?state=sent&q=acme&page=1&pageSize=25"));
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Type" }), "followup");
+    await userEvent.click(within(screen.getByRole("group", { name: "Type" })).getByRole("button", { name: "Follow-ups" }));
     await vi.waitFor(() => expect(mailCalls(seen).at(-1)).toBe("/api/mails?state=sent&kind=followup&q=acme&page=1&pageSize=25"));
     expect(window.location.search).toBe("?tab=sent&q=acme&kind=followup");
   });
