@@ -239,7 +239,7 @@ export function DashboardView() {
             <CardDescription>Queued in time order</CardDescription>
             <CardAction>
               <Button asChild variant="ghost" size="sm">
-                <Link href="/contacts?status=scheduled">
+                <Link href="/mail?tab=scheduled">
                   View all <ArrowUpRight />
                 </Link>
               </Button>
@@ -257,15 +257,20 @@ export function DashboardView() {
             ) : (
               <ol className="-mx-2 divide-y">
                 {data.upcoming.map((u) => (
-                  <li key={u.messageId} className="grid grid-cols-[6.5rem_1fr_auto] items-center gap-3 px-2 py-2.5 first:pt-0 last:pb-0">
-                    <Postmark at={u.scheduledFor} />
-                    <div className="min-w-0">
-                      <div className="truncate text-[13px] font-medium">{u.person}</div>
-                      <div className="truncate font-mono text-xs text-muted-foreground">{u.email}</div>
-                    </div>
-                    <Badge variant="outline" className="max-w-32 truncate rounded-md text-[11px] font-normal">
-                      {u.kind === "followup" ? "Follow-up" : u.company}
-                    </Badge>
+                  <li key={u.messageId}>
+                    <Link
+                      href={`/mail/${encodeURIComponent(u.messageId)}`}
+                      className="grid grid-cols-[6.5rem_1fr_auto] items-center gap-3 rounded-md px-2 py-2.5 transition-colors hover:bg-accent/60 focus-visible:ring-[3px] focus-visible:ring-ring/30"
+                    >
+                      <Postmark at={u.scheduledFor} />
+                      <div className="min-w-0">
+                        <div className="truncate text-[13px] font-medium">{u.person}</div>
+                        <div className="truncate font-mono text-xs text-muted-foreground">{u.email}</div>
+                      </div>
+                      <Badge variant="outline" className="max-w-32 truncate rounded-md text-[11px] font-normal">
+                        {u.kind === "followup" ? "Follow-up" : u.company}
+                      </Badge>
+                    </Link>
                   </li>
                 ))}
               </ol>
@@ -330,7 +335,13 @@ export function DashboardView() {
                       {formatShort(e.at)}
                     </time>
                     <div className="min-w-0">
-                      <span className="text-[13px] font-medium">{eventLabel(e.type)}</span>
+                      {typeof e.meta?.messageId === "string" && e.type !== "message_cancelled" ? (
+                        <Link href={`/mail/${encodeURIComponent(e.meta.messageId)}`} className="text-[13px] font-medium underline-offset-2 hover:underline">
+                          {eventLabel(e.type)}
+                        </Link>
+                      ) : (
+                        <span className="text-[13px] font-medium">{eventLabel(e.type)}</span>
+                      )}
                       {e.email && <span className="ml-2 inline-block max-w-full truncate align-bottom font-mono text-xs text-muted-foreground">{e.email}</span>}
                     </div>
                   </li>

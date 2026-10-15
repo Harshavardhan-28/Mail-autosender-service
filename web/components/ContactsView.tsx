@@ -2,20 +2,19 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { CalendarClock, ChevronLeft, ChevronRight, Loader2, MoreHorizontal, Paperclip, Search, Trash2, TriangleAlert, Users } from "lucide-react";
+import { CalendarClock, ChevronLeft, ChevronRight, Loader2, Mail, MoreHorizontal, Paperclip, Search, Trash2, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { api, ApiError } from "@/lib/api";
 import { checkSendTime, toLocalInputValue, MAX_DAYS_AHEAD } from "@/lib/schedule";
 import { formatDateTime, plural, statusLabel } from "@/lib/format";
 import { refusalText } from "@/lib/refusals";
-import { CONTACT_STATUSES, type BatchSummary, type ContactListItem, type ContactStatus, type ContactsPage, type MessageRef, type ResolveAction, type Resume } from "@/lib/types";
+import { CONTACT_STATUSES, type BatchSummary, type ContactListItem, type ContactStatus, type ContactsPage, type MessageRef, type Resume } from "@/lib/types";
 import { useMode } from "./AppShell";
 import { DeleteDialog, deleteContactsCopy } from "./DeleteDialog";
 import { FollowupToggle } from "./FollowupToggle";
 import { Notice } from "./Notice";
 import { OverdueBanner } from "./OverdueBanner";
 import { PageHeader } from "./PageHeader";
-import { Postmark } from "./Postmark";
 import { StatusBadge } from "./StatusBadge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -38,32 +37,23 @@ function describe(err: unknown): string {
 
 type Confirm = "opt-out" | "replied" | null;
 
-const RESOLVE_COPY: Record<ResolveAction, { label: string; ask: string; confirm: string; hint: string }> = {
-  mark_sent: { label: "It was sent", ask: "Check your Sent folder first. Record this email as delivered?", confirm: "Mark sent", hint: "It reached the recipient. Record it as delivered." },
-  requeue: { label: "Send again", ask: "Send it again now? If it did go out, the recipient gets a duplicate.", confirm: "Send again", hint: "It did not go out. Queue it again now." },
-  cancel: { label: "Drop it", ask: "Drop this email? It will not be sent.", confirm: "Drop email", hint: "Do not send it at all." },
-};
-
-const kindLabel = (m: Pick<MessageRef, "kind">) => (m.kind === "followup" ? "Follow-up" : "First email");
+/** The mail to open from a contact row: what is pending next, else the latest that went out. */
+function mailToView(c: ContactListItem): MessageRef | undefined {
+  return c.messages.find((m) => m.state === "scheduled" || m.state === "sending" || m.state === "needs_review") ?? [...c.messages].reverse().find((m) => m.state === "sent") ?? c.messages[0];
+}
 
 function RowActions({ contact, onDone }: { contact: ContactListItem; onDone: () => void }) {
   const [editing, setEditing] = useState(false);
   const [when, setWhen] = useState("");
   const [confirm, setConfirm] = useState<Confirm>(null);
-  const [resolveMsg, setResolveMsg] = useState<MessageRef | null>(null);
-  const [resolving, setResolving] = useState<ResolveAction | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
-  // Hide a cancelled send at once, before the list reload replaces this row's data.
-  const [cancelled, setCancelled] = useState<string[]>([]);
 
   const initial = contact.messages.find((m) => m.kind === "initial");
-  const pending = contact.messages.filter((m) => m.state === "scheduled" && !cancelled.includes(m.id));
   const canSchedule = (contact.status === "uploaded" || contact.status === "scheduled") && (!initial || initial.state === "scheduled");
-  const review = contact.messages.filter((m) => m.state === "needs_review");
   const closed = contact.status === "replied" || contact.status === "opted_out";
-  const hasMenu = canSchedule || pending.length > 0 || !closed || contact.status !== "opted_out";
+  const hasMenu = canSchedule || !closed || contact.status !== "opted_out";
 
   async function run(fn: () => Promise<unknown>, done?: string) {
     setBusy(true);
@@ -72,8 +62,6 @@ function RowActions({ contact, onDone }: { contact: ContactListItem; onDone: () 
       await fn();
       setEditing(false);
       setConfirm(null);
-      setResolveMsg(null);
-      setResolving(null);
       if (done) toast.success(done);
       onDone();
     } catch (err) {
@@ -90,37 +78,9 @@ function RowActions({ contact, onDone }: { contact: ContactListItem; onDone: () 
     void run(() => api.scheduleContact(contact.id, r.at!.toISOString()), "Send time saved");
   }
 
-  async function cancelOne(m: MessageRef) {
-    try {
-      await api.cancelMessage(m.id);
-      setCancelled((c) => [...c, m.id]);
-      toast.success(`${kindLabel(m)} cancelled`);
-      onDone();
-    } catch (err) {
-      toast.error(describe(err));
-    }
-  }
-
   const now = new Date();
   return (
     <div className="flex items-center justify-end gap-1.5">
-      {review.map((m) => (
-        <Button
-          key={m.id}
-          variant="outline"
-          size="sm"
-          className="border-st-amber/40 text-st-amber hover:bg-st-amber-bg hover:text-st-amber"
-          aria-label={`${kindLabel(m)} delivery unknown. Resolve`}
-          onClick={() => {
-            setError(null);
-            setResolving(null);
-            setResolveMsg(m);
-          }}
-        >
-          <TriangleAlert />
-          Resolve
-        </Button>
-      ))}
       <Button variant="ghost" size="icon-sm" aria-label={`Delete ${contact.email}`} onClick={() => setDeleting(true)}>
         <Trash2 />
       </Button>
@@ -144,12 +104,7 @@ function RowActions({ contact, onDone }: { contact: ContactListItem; onDone: () 
                 {initial ? "Reschedule" : "Schedule"}
               </DropdownMenuItem>
             )}
-            {pending.map((m) => (
-              <DropdownMenuItem key={m.id} onSelect={() => void cancelOne(m)}>
-                Cancel {m.kind === "followup" ? "follow-up" : "send"}
-              </DropdownMenuItem>
-            ))}
-            {(canSchedule || pending.length > 0) && (!closed || contact.status !== "opted_out") && <DropdownMenuSeparator />}
+            {canSchedule && (!closed || contact.status !== "opted_out") && <DropdownMenuSeparator />}
             {!closed && <DropdownMenuItem onSelect={() => setConfirm("replied")}>Mark replied</DropdownMenuItem>}
             {contact.status !== "opted_out" && (
               <DropdownMenuItem variant="destructive" onSelect={() => setConfirm("opt-out")}>
@@ -220,49 +175,6 @@ function RowActions({ contact, onDone }: { contact: ContactListItem; onDone: () 
         </AlertDialogContent>
       </AlertDialog>
 
-      <Dialog open={resolveMsg !== null} onOpenChange={(o) => !o && (setResolveMsg(null), setResolving(null))}>
-        <DialogContent className="sm:max-w-md">
-          {resolveMsg && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{kindLabel(resolveMsg)} delivery unknown</DialogTitle>
-                <DialogDescription>
-                  The send to {contact.email} was interrupted, so it is unclear whether it went out. Check your Sent folder, then choose what to record.
-                </DialogDescription>
-              </DialogHeader>
-              {resolving ? (
-                <div className="space-y-4">
-                  <p className="text-[13px]">{RESOLVE_COPY[resolving].ask}</p>
-                  {error && <p className="text-xs text-destructive">{error}</p>}
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setResolving(null)}>
-                      Keep
-                    </Button>
-                    <Button variant={resolving === "requeue" ? "destructive" : "default"} disabled={busy} onClick={() => run(() => api.resolveMessage(resolveMsg.id, resolving), "Settled")}>
-                      {RESOLVE_COPY[resolving].confirm}
-                    </Button>
-                  </DialogFooter>
-                </div>
-              ) : (
-                <ul className="space-y-2">
-                  {(Object.keys(RESOLVE_COPY) as ResolveAction[]).map((action) => (
-                    <li key={action}>
-                      <button
-                        type="button"
-                        onClick={() => setResolving(action)}
-                        className="flex w-full flex-col items-start gap-0.5 rounded-lg border px-3 py-2.5 text-left transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/30"
-                      >
-                        <span className="text-[13px] font-medium">{RESOLVE_COPY[action].label}</span>
-                        <span className="text-xs text-muted-foreground">{RESOLVE_COPY[action].hint}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
@@ -301,36 +213,12 @@ function ResumePick({ contact, resumes, onDone }: { contact: ContactListItem; re
   );
 }
 
-function NextSend({ contact }: { contact: ContactListItem }) {
-  const next = contact.messages.find((m) => m.state === "scheduled" || m.state === "sending");
-  const lastSent = [...contact.messages].reverse().find((m) => m.state === "sent");
-  const review = contact.messages.find((m) => m.state === "needs_review" || m.state === "failed");
-  return (
-    <div className="space-y-1">
-      {next ? (
-        <div className="flex items-center gap-2">
-          <Postmark at={next.scheduledFor} label={kindLabel(next)} />
-          <span className="rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground">{kindLabel(next)}</span>
-        </div>
-      ) : (
-        <span className="text-muted-foreground">Nothing scheduled</span>
-      )}
-      {lastSent?.sentAt && <div className="text-xs text-muted-foreground">Sent {formatDateTime(lastSent.sentAt)}</div>}
-      {review && (
-        <span className="inline-block rounded-md bg-st-red-bg px-1.5 py-0.5 text-[11px] font-medium text-st-red">
-          {kindLabel(review)} {statusLabel(review.state).toLowerCase()}
-        </span>
-      )}
-    </div>
-  );
-}
-
-export function ContactsView({ initialBatchId, initialStatus }: { initialBatchId?: string; initialStatus?: string }) {
+export function ContactsView({ initialBatchId, initialStatus, initialQ }: { initialBatchId?: string; initialStatus?: string; initialQ?: string }) {
   const { mode } = useMode();
   const [status, setStatus] = useState<ContactStatus | "">(isStatus(initialStatus) ? initialStatus : "");
   const [batchId, setBatchId] = useState(initialBatchId ?? "");
-  const [search, setSearch] = useState("");
-  const [q, setQ] = useState("");
+  const [search, setSearch] = useState(initialQ ?? "");
+  const [q, setQ] = useState(initialQ ?? "");
   const [page, setPage] = useState(1);
   const [batches, setBatches] = useState<BatchSummary[]>([]);
   const [data, setData] = useState<ContactsPage | null>(null);
@@ -490,13 +378,12 @@ export function ContactsView({ initialBatchId, initialStatus }: { initialBatchId
       )}
 
       <div className="rounded-lg border bg-card" aria-busy={loading}>
-        <Table className="md:min-w-[60rem]">
+        <Table className="md:min-w-[48rem]">
           <caption className="sr-only">Contacts matching the filters</caption>
           <TableHeader>
             <TableRow className="hover:bg-transparent max-md:hidden">
               <TableHead className="pl-4">Recipient</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>Next send</TableHead>
               <TableHead>Follow-up</TableHead>
               <TableHead className="pr-4 text-right">
                 <span className="sr-only">Actions</span>
@@ -514,9 +401,6 @@ export function ContactsView({ initialBatchId, initialStatus }: { initialBatchId
                   </TableCell>
                   <TableCell>
                     <Skeleton className="h-5 w-20" />
-                  </TableCell>
-                  <TableCell>
-                    <Skeleton className="h-8 w-24" />
                   </TableCell>
                   <TableCell>
                     <Skeleton className="h-5 w-32" />
@@ -548,9 +432,16 @@ export function ContactsView({ initialBatchId, initialStatus }: { initialBatchId
                 <TableCell className="max-md:block max-md:px-4 max-md:py-1">
                   <StatusBadge status={c.status} />
                   {c.repliedAt && <div className="mt-1 text-xs text-muted-foreground">{formatDateTime(c.repliedAt)}</div>}
-                </TableCell>
-                <TableCell className="max-md:block max-md:px-4 max-md:py-1">
-                  <NextSend contact={c} />
+                  {mailToView(c) && (
+                    <Link
+                      href={`/mail/${encodeURIComponent(mailToView(c)!.id)}`}
+                      aria-label={`View mail for ${c.email}`}
+                      className="mt-1 inline-flex items-center gap-1 rounded-sm text-xs font-medium text-accent-text underline-offset-2 hover:underline"
+                    >
+                      <Mail aria-hidden="true" className="size-3" />
+                      View mail
+                    </Link>
+                  )}
                 </TableCell>
                 <TableCell className="max-md:block max-md:px-4 max-md:py-1">
                   <FollowupToggle
@@ -567,7 +458,7 @@ export function ContactsView({ initialBatchId, initialStatus }: { initialBatchId
             ))}
             {data && data.contacts.length === 0 && (
               <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={5} className="py-14 text-center whitespace-normal">
+                <TableCell colSpan={4} className="py-14 text-center whitespace-normal">
                   <Users aria-hidden="true" className="mx-auto mb-2 size-5 text-muted-foreground" />
                   <p className="text-muted-foreground">No contacts match these filters. Clear the search or pick another status.</p>
                 </TableCell>

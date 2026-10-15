@@ -33,7 +33,7 @@ describe("AppShell navigation", () => {
     render(<AppShell>page</AppShell>);
     const nav = screen.getByRole("navigation", { name: "Main" });
     expect(within(nav).getByRole("link", { name: "Dashboard" })).toHaveAttribute("aria-current", "page");
-    for (const other of ["Upload", "Contacts", "Settings"]) {
+    for (const other of ["Mail", "Upload", "Contacts", "Settings"]) {
       expect(within(nav).getByRole("link", { name: other })).not.toHaveAttribute("aria-current");
     }
     expect(await screen.findByText("Live sending")).toBeInTheDocument();

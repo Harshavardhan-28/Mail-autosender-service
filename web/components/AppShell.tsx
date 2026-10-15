@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FlaskConical, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Settings, Upload, Users, type LucideIcon } from "lucide-react";
+import { FlaskConical, LayoutDashboard, LogOut, Mail, Menu, PanelLeftClose, PanelLeftOpen, Settings, Upload, Users, type LucideIcon } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { BrandMark } from "./BrandMark";
@@ -23,6 +23,7 @@ export const useMode = () => useContext(Ctx);
 
 const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/mail", label: "Mail", icon: Mail },
   { href: "/upload", label: "Upload", icon: Upload },
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/settings", label: "Settings", icon: Settings },

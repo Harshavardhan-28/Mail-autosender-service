@@ -13,6 +13,9 @@ import type {
   ResolveAction,
   Batch,
   Dashboard,
+  MailDetail,
+  MailsPage,
+  MailsQuery,
   FollowupResult,
   FollowupTemplate,
   ImportConflict,
@@ -217,6 +220,15 @@ export function createApi(options: ApiOptions = {}) {
       for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== "" && v !== null) params.set(k, String(v));
       const qs = params.toString();
       return request("GET", `/api/contacts${qs ? `?${qs}` : ""}`);
+    },
+    listMails(query: MailsQuery = {}): Promise<MailsPage> {
+      const params = new URLSearchParams();
+      for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== "" && v !== null) params.set(k, String(v));
+      const qs = params.toString();
+      return request("GET", `/api/mails${qs ? `?${qs}` : ""}`);
+    },
+    async getMail(id: string): Promise<MailDetail> {
+      return (await request<{ mail: MailDetail }>("GET", `/api/mails/${seg(id)}`)).mail;
     },
     // Deletes: a 409 with needsForce means some contacts were already emailed; retry with force=true after confirming.
     deleteContact(id: string, force?: boolean): Promise<{ deleted: number }> {

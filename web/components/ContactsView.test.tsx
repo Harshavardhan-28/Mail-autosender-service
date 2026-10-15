@@ -29,26 +29,29 @@ beforeEach(() => resetApiState());
 afterEach(() => vi.unstubAllGlobals());
 
 describe("ContactsView", () => {
-  it("filters by the batch from the URL and cancels a scheduled send by message id", async () => {
-    let releaseReload = false;
-    const seen = stubFetch((c) => {
-      if (c.url === "/api/batches") return json({ batches: [] });
-      if (c.method === "DELETE") {
-        releaseReload = true;
-        return json({ message: {}, contact: {} });
-      }
-      // the reload after cancel never resolves: the button must already be gone
-      if (releaseReload) return new Promise<Response>(() => {});
-      return json({ contacts: [row], total: 1, page: 1, pageSize: 25 });
-    });
-    render(<ContactsView initialBatchId="b-1" />);
+  it("filters by the batch from the URL and offers no per-send columns or cancel (those live under Mail)", async () => {
+    const seen = stubFetch((c) => (c.url === "/api/batches" ? json({ batches: [] }) : json({ contacts: [row], total: 1, page: 1, pageSize: 25 })));
+    render(<ContactsView initialBatchId="b-1" initialQ="jo@" />);
     await userEvent.click(await screen.findByRole("button", { name: "Actions for jo@acme.com" }));
-    await userEvent.click(await screen.findByRole("menuitem", { name: "Cancel send" }));
-    await vi.waitFor(() => expect(seen.some((c) => c.method === "DELETE")).toBe(true));
-    expect(seen.find((c) => c.url.startsWith("/api/contacts"))!.url).toBe("/api/contacts?batchId=b-1&page=1&pageSize=25");
-    expect(seen.find((c) => c.method === "DELETE")!.url).toBe("/api/messages/m-1");
-    await userEvent.click(screen.getByRole("button", { name: "Actions for jo@acme.com" }));
     expect(screen.queryByRole("menuitem", { name: "Cancel send" })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Reschedule" })).toBeInTheDocument();
+    expect(seen.find((c) => c.url.startsWith("/api/contacts"))!.url).toBe("/api/contacts?q=jo%40&batchId=b-1&page=1&pageSize=25");
+    expect(screen.queryByRole("columnheader", { name: "Next send" })).toBeNull();
+  });
+
+  it("links each contact to its mail, preferring the one still pending", async () => {
+    const both: ContactListItem = {
+      ...row,
+      messages: [
+        { id: "m-sent", kind: "initial", state: "sent", scheduledFor: "2030-02-01T09:00:00Z", sentAt: "2030-02-01T09:00:10Z" },
+        { id: "m-fu", kind: "followup", state: "scheduled", scheduledFor: "2030-02-08T09:00:00Z", sentAt: null },
+      ],
+    };
+    const none: ContactListItem = { ...row, id: "c-2", email: "no@acme.com", status: "uploaded", messages: [] };
+    stubFetch((c) => (c.url === "/api/batches" ? json({ batches: [] }) : json({ contacts: [both, none], total: 2, page: 1, pageSize: 25 })));
+    render(<ContactsView />);
+    expect(await screen.findByRole("link", { name: "View mail for jo@acme.com" })).toHaveAttribute("href", "/mail/m-fu");
+    expect(screen.queryByRole("link", { name: "View mail for no@acme.com" })).toBeNull();
   });
 
   it("asks before opting out, then calls the opt-out endpoint", async () => {
@@ -61,21 +64,6 @@ describe("ContactsView", () => {
     expect(seen.some((c) => c.method === "POST")).toBe(false);
     await userEvent.click(within(dialog).getByRole("button", { name: "Opt out" }));
     await vi.waitFor(() => expect(seen.find((c) => c.method === "POST")?.url).toBe("/api/contacts/c-1/opt-out"));
-  });
-
-  it("lets the operator settle a needs_review message, asking first, via the resolve endpoint", async () => {
-    const stuck: ContactListItem = { ...row, messages: [{ id: "m-9", kind: "initial", state: "needs_review", scheduledFor: "2030-02-01T09:00:00Z", sentAt: null }] };
-    const seen = stubFetch((c) =>
-      c.url === "/api/batches" ? json({ batches: [] }) : c.method === "POST" ? json({ message: {}, contact: {} }) : json({ contacts: [stuck], total: 1, page: 1, pageSize: 25 }),
-    );
-    render(<ContactsView />);
-    await userEvent.click(await screen.findByRole("button", { name: /delivery unknown\. resolve/i }));
-    await userEvent.click(await screen.findByRole("button", { name: /send again/i }));
-    expect(screen.getByText(/duplicate/i)).toBeInTheDocument();
-    expect(seen.some((c) => c.method === "POST")).toBe(false);
-    await userEvent.click(screen.getByRole("button", { name: "Send again" }));
-    await vi.waitFor(() => expect(seen.find((c) => c.method === "POST")?.url).toBe("/api/messages/m-9/resolve"));
-    expect(JSON.parse(seen.find((c) => c.method === "POST")!.body as string)).toEqual({ action: "requeue" });
   });
 
   it("shows which resume goes out and lets the operator pick a per-contact override", async () => {

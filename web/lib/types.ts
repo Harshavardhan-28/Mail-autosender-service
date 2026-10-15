@@ -321,3 +321,64 @@ export interface Dashboard {
   sendHold: { at: string; code: string; message: string; scope?: "resume"; messageId?: string } | null;
   dryRun: boolean;
 }
+
+/** GET /api/mails: one row per live (non-cancelled) message. */
+export type MailTab = "sent" | "scheduled" | "attention";
+export type MailKindFilter = MessageKind;
+
+export interface MailRow {
+  id: string;
+  kind: MessageKind;
+  state: MessageState;
+  subject: string;
+  scheduledFor: string;
+  sentAt: string | null;
+  attempts: number;
+  error: string | null;
+  dryRun: boolean;
+  /** Scheduled and more than an hour past its time (the send window closed or pacing did not fit it). */
+  overdue: boolean;
+  contact: { id: string; person: string; company: string; role: string; email: string; status: ContactStatus; repliedAt: string | null };
+  batch: { id: string; name: string };
+}
+
+export interface MailCounts {
+  sent: number;
+  scheduled: number;
+  attention: number;
+}
+
+export interface MailsPage {
+  mails: MailRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  counts: MailCounts;
+}
+
+export interface MailsQuery {
+  state?: MailTab | "all";
+  kind?: MessageKind;
+  q?: string;
+  batchId?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface MailEvent {
+  type: string;
+  at: string;
+  meta: Record<string, unknown> | null;
+}
+
+/** GET /api/mails/:id. `body` is the plain-text mail exactly as it is (or will be) sent. */
+export interface MailDetail extends MailRow {
+  body: string;
+  attachment: Attachment | null;
+  messageId: string | null;
+  /** The initial message a follow-up is threaded under. */
+  threadedWith: string | null;
+  /** The contact's other live message (the follow-up of an initial mail, or the initial of a follow-up). */
+  related: { id: string; kind: MessageKind; state: MessageState } | null;
+  timeline: MailEvent[];
+}
