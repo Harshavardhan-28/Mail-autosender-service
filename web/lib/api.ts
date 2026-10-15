@@ -5,6 +5,7 @@
 import type {
   BatchSummary,
   CancelResult,
+  CommitResult,
   Contact,
   ContactsPage,
   ContactsQuery,
@@ -12,10 +13,19 @@ import type {
   ResolveAction,
   Batch,
   Dashboard,
+  MailDetail,
+  MailsPage,
+  MailsQuery,
   FollowupResult,
   FollowupTemplate,
+  ImportConflict,
+  ImportRow,
   Message,
+  OverdueList,
+  PreviewResult,
   Refusal,
+  ReschedulePlan,
+  Resolution,
   Resume,
   RowIssue,
   SendWindow,
@@ -32,15 +42,23 @@ export class ApiError extends Error {
   readonly refused?: Refusal[];
   /** 422 upload: every row was rejected. */
   readonly rowErrors?: RowIssue[];
+  /** 409 import commit: duplicate emails that still need a decision (`code: needs_resolution`). */
+  readonly conflicts?: ImportConflict[];
+  /** 409 delete refusal: some contacts were already emailed; repeat with force=true to delete anyway. */
+  readonly needsForce: boolean;
+  readonly protectedCount?: number;
 
   constructor(status: number, message: string, body: unknown = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.body = body;
-    const b = body as { refused?: unknown; errors?: unknown } | null;
+    const b = body as { refused?: unknown; errors?: unknown; conflicts?: unknown; code?: unknown; protectedCount?: unknown } | null;
+    this.needsForce = status === 409 && b?.code === "needs_force";
+    if (this.needsForce && typeof b?.protectedCount === "number") this.protectedCount = b.protectedCount;
     if (Array.isArray(b?.refused)) this.refused = b.refused as Refusal[];
     if (Array.isArray(b?.errors)) this.rowErrors = b.errors as RowIssue[];
+    if (status === 409 && b?.code === "needs_resolution" && Array.isArray(b.conflicts)) this.conflicts = b.conflicts as ImportConflict[];
   }
 }
 
@@ -181,6 +199,16 @@ export function createApi(options: ApiOptions = {}) {
       form.append("file", file, file.name);
       return request<UploadResult>("POST", "/api/batches", { form });
     },
+    /** Parses and validates a CSV and reports duplicates; nothing is saved. */
+    previewBatch(file: File): Promise<PreviewResult> {
+      const form = new FormData();
+      form.append("file", file, file.name);
+      return request<PreviewResult>("POST", "/api/batches/preview", { form });
+    },
+    /** Saves the (edited) preview rows as a batch. `resolutions` is keyed by lowercased email. A 409 needs_resolution carries `conflicts`. */
+    commitBatch(body: { name: string; filename: string; rows: ImportRow[]; resolutions: Record<string, Resolution> }): Promise<CommitResult> {
+      return request<CommitResult>("POST", "/api/batches/commit", { json: body });
+    },
     async listBatches(): Promise<BatchSummary[]> {
       return (await request<{ batches: BatchSummary[] }>("GET", "/api/batches")).batches;
     },
@@ -193,6 +221,25 @@ export function createApi(options: ApiOptions = {}) {
       const qs = params.toString();
       return request("GET", `/api/contacts${qs ? `?${qs}` : ""}`);
     },
+    listMails(query: MailsQuery = {}): Promise<MailsPage> {
+      const params = new URLSearchParams();
+      for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== "" && v !== null) params.set(k, String(v));
+      const qs = params.toString();
+      return request("GET", `/api/mails${qs ? `?${qs}` : ""}`);
+    },
+    async getMail(id: string): Promise<MailDetail> {
+      return (await request<{ mail: MailDetail }>("GET", `/api/mails/${seg(id)}`)).mail;
+    },
+    // Deletes: a 409 with needsForce means some contacts were already emailed; retry with force=true after confirming.
+    deleteContact(id: string, force?: boolean): Promise<{ deleted: number }> {
+      return request("DELETE", `/api/contacts/${seg(id)}${force ? "?force=true" : ""}`);
+    },
+    deleteContacts(ids: string[], force?: boolean): Promise<{ deleted: number }> {
+      return request("POST", "/api/contacts/delete", { json: force ? { ids, force: true } : { ids } });
+    },
+    deleteBatch(id: string, force?: boolean): Promise<{ deleted: number }> {
+      return request("DELETE", `/api/batches/${seg(id)}${force ? "?force=true" : ""}`);
+    },
     async markReplied(id: string): Promise<Contact> {
       return (await request<{ contact: Contact }>("POST", `/api/contacts/${seg(id)}/mark-replied`)).contact;
     },
@@ -202,7 +249,11 @@ export function createApi(options: ApiOptions = {}) {
 
     // Scheduling (bulk is all-or-nothing: a 409 carries `refused`)
     async scheduleBatch(batchId: string, body: { contactIds: string[]; sendAt: string; staggerMinutes?: number; resumeId?: string }): Promise<Message[]> {
-      return (await request<{ messages: Message[] }>("POST", `/api/batches/${seg(batchId)}/schedule`, { json: body })).messages;
+      return (await this.scheduleBatchWithPlan(batchId, body)).messages;
+    },
+    /** Same call, also returning how the server bunched the sends into the send window. */
+    scheduleBatchWithPlan(batchId: string, body: { contactIds: string[]; sendAt: string; staggerMinutes?: number; resumeId?: string }): Promise<{ messages: Message[]; plan?: ReschedulePlan }> {
+      return request("POST", `/api/batches/${seg(batchId)}/schedule`, { json: body });
     },
     async scheduleContact(contactId: string, sendAt: string, resumeId?: string): Promise<Message> {
       const json = resumeId ? { sendAt, resumeId } : { sendAt };
@@ -232,6 +283,12 @@ export function createApi(options: ApiOptions = {}) {
     },
     setFollowup(contactId: string, body: { enabled: boolean; delayDays?: number }): Promise<FollowupResult> {
       return request("PUT", `/api/contacts/${seg(contactId)}/followup`, { json: body });
+    },
+    getOverdue(): Promise<OverdueList> {
+      return request("GET", "/api/messages/overdue");
+    },
+    rescheduleOverdue(body: { sendAt?: string; staggerMinutes?: number; messageIds?: string[] } = {}): Promise<{ rescheduled: number; messages: Message[]; plan: ReschedulePlan | null }> {
+      return request("POST", "/api/messages/reschedule-overdue", { json: body });
     },
     cancelMessage(messageId: string): Promise<CancelResult> {
       return request("DELETE", `/api/messages/${seg(messageId)}`);

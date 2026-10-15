@@ -45,6 +45,9 @@ export function renderFollowup(contact, template = DEFAULT_TEMPLATE) {
   return { subject, text };
 }
 
+// The subject a follow-up goes out with: exactly one "Re: " prefix, even when the original subject or the template already carries some.
+export const followupSubject = (renderedSubject) => `Re: ${renderedSubject.replace(/^\s*(re:\s*)+/i, "")}`;
+
 export async function getTemplate(db) {
   const { rows } = await db.query("SELECT value FROM settings WHERE key = $1", [TEMPLATE_KEY]);
   const parsed = templateSchema.safeParse(rows[0]?.value);

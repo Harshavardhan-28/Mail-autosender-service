@@ -1,5 +1,7 @@
 // Client-side schedule validation. Mirrors src/domain/schedule.js (future, <= 90 days,
 // stagger 0..1440 min, every staggered time within 90 days). The server stays the authority.
+import type { SendWindow } from "./types";
+import { planWindowStagger, type WindowPlan } from "./sendWindowPlan";
 
 export const MAX_DAYS_AHEAD = 90;
 export const MAX_STAGGER_MINUTES = 24 * 60;
@@ -33,6 +35,8 @@ export interface ScheduleInput {
   /** Per-row send time (datetime-local value); empty/missing means "use the bulk time". */
   overrides: Record<string, string>;
   now: Date;
+  /** Saved send window. With stagger > 0 the plan is bunched inside it, like the server does; null/absent = unknown. */
+  window?: SendWindow | null;
 }
 
 export interface SchedulePlan {
@@ -40,6 +44,8 @@ export interface SchedulePlan {
   overrides: { contactId: string; sendAt: string }[];
   /** Planned send time per selected contact. */
   times: Record<string, Date>;
+  /** Present when the times were bunched into the send window (stagger > 0 and the window is known). */
+  windowPlan?: { plan: WindowPlan; count: number; window: SendWindow };
 }
 
 export interface ScheduleErrors {
@@ -91,14 +97,23 @@ export function planSchedule(input: ScheduleInput): ScheduleResult {
   }
 
   let bulk: SchedulePlan["bulk"] = null;
+  let windowPlan: SchedulePlan["windowPlan"];
   if (bulkIds.length > 0) {
     const r = checkSendTime(input.sendAt, now);
     if (r.error) errors.sendAt = r.error;
     else if (!errors.stagger) {
       const start = r.at!;
-      bulkIds.forEach((id, i) => {
-        times[id] = new Date(start.getTime() + i * stagger * 60_000);
-      });
+      if (stagger > 0 && input.window) {
+        const wp = planWindowStagger(start, bulkIds.length, stagger, input.window);
+        bulkIds.forEach((id, i) => {
+          times[id] = wp.times[i]!;
+        });
+        windowPlan = { plan: wp, count: bulkIds.length, window: input.window };
+      } else {
+        bulkIds.forEach((id, i) => {
+          times[id] = new Date(start.getTime() + i * stagger * 60_000);
+        });
+      }
       const last = times[bulkIds.at(-1)!]!;
       if (last.getTime() > now.getTime() + MAX_DAYS_AHEAD * DAY_MS) {
         errors.stagger = `With this stagger the last email would go out after ${MAX_DAYS_AHEAD} days`;
@@ -110,5 +125,5 @@ export function planSchedule(input: ScheduleInput): ScheduleResult {
 
   const failed = errors.form || errors.sendAt || errors.stagger || Object.keys(errors.overrides).length > 0;
   if (failed) return { ok: false, errors };
-  return { ok: true, plan: { bulk, overrides, times } };
+  return { ok: true, plan: { bulk, overrides, times, ...(windowPlan ? { windowPlan } : {}) } };
 }

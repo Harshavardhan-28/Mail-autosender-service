@@ -89,7 +89,10 @@ export function internalRouter({ pool, config, mailer, checkReply, logger, verif
   // an overlapping call returns 200 {skipped: in_progress}, not an error, so Cloud Scheduler does not retry it.
   router.post("/sweep", async (_req, res, next) => {
     try {
-      const result = await runSweep({ pool, config, checkReply, logger, shouldStop: () => Boolean(shutdownSignal?.aborted) });
+      // Stops cooperatively before Cloud Scheduler's 600 s attempt deadline; an unfinished sweep records nothing
+      // and the next one resumes (candidates are ordered oldest-checked first). Not an error: 200 + stopped.
+      const deadlineMs = now().getTime() + (config.internalSweepDeadlineSeconds ?? 420) * 1000;
+      const result = await runSweep({ pool, config, checkReply, logger, shouldStop: () => Boolean(shutdownSignal?.aborted) || now().getTime() >= deadlineMs });
       logger.info("internal sweep finished", { event: "internal_sweep", ...result });
       res.json({ ok: true, result });
     } catch (err) {

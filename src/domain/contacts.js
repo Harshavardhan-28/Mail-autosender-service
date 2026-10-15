@@ -99,3 +99,50 @@ export async function optOut(pool, id) {
 }
 
 export { inTx };
+
+// Contacts that already went out (or may have) need an explicit `force` to delete.
+const PROTECTED_STATUSES = ["sent", "replied"];
+
+// Locks the targets (sorted by id), enforces protection, audits and deletes them. Runs inside the caller's tx.
+// Messages disappear via ON DELETE CASCADE (that is the cancel); events keep their rows with contact_id NULL.
+export async function deleteContactsTx(db, ids, { force = false, audit = true } = {}) {
+  const found = await db.query(
+    `SELECT c.id, c.batch_id, c.email, c.status,
+            EXISTS (SELECT 1 FROM messages m WHERE m.contact_id = c.id AND m.state IN ('sent', 'needs_review')) AS has_sent
+       FROM contacts c WHERE c.id = ANY($1::uuid[]) ORDER BY c.id FOR UPDATE OF c`,
+    [ids],
+  );
+  const protectedCount = found.rows.filter((r) => PROTECTED_STATUSES.includes(r.status) || r.has_sent).length;
+  if (protectedCount && !force) {
+    throw new HttpError(409, "Some contacts were already emailed; confirm to delete them anyway", { code: "needs_force", protectedCount });
+  }
+  for (const r of audit ? found.rows : []) {
+    await db.query("INSERT INTO events(type, meta) VALUES ('contact_deleted', $1)", [
+      JSON.stringify({ email: r.email, batchId: r.batch_id, status: r.status }),
+    ]);
+  }
+  await db.query("DELETE FROM contacts WHERE id = ANY($1::uuid[])", [found.rows.map((r) => r.id)]);
+  return found.rows;
+}
+
+export async function deleteContacts(pool, ids, { force = false } = {}) {
+  return inTx(pool, async (db) => {
+    const removed = await deleteContactsTx(db, ids, { force });
+    if (!removed.length) throw new HttpError(404, ids.length === 1 ? "Contact not found" : "No matching contacts found");
+    return { deleted: removed.length };
+  });
+}
+
+export async function deleteBatch(pool, batchId, { force = false } = {}) {
+  return inTx(pool, async (db) => {
+    const b = await db.query("SELECT * FROM batches WHERE id = $1 FOR UPDATE", [batchId]);
+    if (!b.rowCount) throw new HttpError(404, "Batch not found");
+    const ids = (await db.query("SELECT id FROM contacts WHERE batch_id = $1 ORDER BY id", [batchId])).rows.map((r) => r.id);
+    const removed = await deleteContactsTx(db, ids, { force });
+    await db.query("DELETE FROM batches WHERE id = $1", [batchId]);
+    await db.query("INSERT INTO events(type, meta) VALUES ('batch_deleted', $1)", [
+      JSON.stringify({ batchId, name: b.rows[0].name, contacts: removed.length }),
+    ]);
+    return { deleted: removed.length, batchId };
+  });
+}

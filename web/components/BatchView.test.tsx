@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { json, stubFetch } from "@/test/fetch";
 import { BatchView } from "./BatchView";
+
+const push = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push, replace: vi.fn(), refresh: vi.fn() }) }));
 import { resetApiState } from "@/lib/api";
 import type { ContactWithPreview } from "@/lib/types";
 
@@ -53,5 +57,23 @@ describe("BatchView", () => {
     stubFetch((c) => (c.url === "/api/batches/b-1" ? json({ error: "Batch not found" }, 404) : json({})));
     render(<BatchView id="b-1" />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Batch not found");
+  });
+
+  it("deletes the whole batch after confirming, then goes to Contacts", async () => {
+    push.mockClear();
+    const seen = stubFetch((c) => {
+      if (c.method === "DELETE") return json({ deleted: 2, batchId: "b-1" });
+      if (c.url === "/api/batches/b-1") return json({ batch: { id: "b-1", name: "Spring", originalFilename: null, createdAt: "2030-01-01T00:00:00Z" }, contacts: [contact("a", "uploaded"), contact("b", "uploaded")] });
+      if (c.url === "/api/resumes") return json({ resumes: [] });
+      return json({ enforced: false });
+    });
+    render(<BatchView id="b-1" />);
+    await userEvent.click(await screen.findByRole("button", { name: "Delete batch" }));
+    const dlg = await screen.findByRole("alertdialog");
+    expect(within(dlg).getByText(/Delete batch “Spring”\?/)).toBeInTheDocument();
+    expect(seen.some((c) => c.method === "DELETE")).toBe(false);
+    await userEvent.click(within(dlg).getByRole("button", { name: "Delete batch" }));
+    await vi.waitFor(() => expect(push).toHaveBeenCalledWith("/contacts"));
+    expect(seen.find((c) => c.method === "DELETE")!.url).toBe("/api/batches/b-1");
   });
 });

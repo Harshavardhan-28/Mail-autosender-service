@@ -116,3 +116,55 @@ describe("planSchedule", () => {
     if (r.ok) expect(r.plan.bulk!.contactIds).toEqual(["a", "b", "c"]);
   });
 });
+
+describe("planSchedule with a send window (mirrors the server's window-bunched stagger)", () => {
+  // Window 09:00-10:00 in the machine's zone would make the vectors zone-dependent, so use a fixed zone.
+  const win = { start: "09:00", end: "10:00", tz: "Asia/Kolkata" };
+  const ids = Array.from({ length: 24 }, (_, i) => `c${i}`);
+  const nowUtc = new Date("2030-01-10T00:00:00Z");
+  // datetime-local is the machine's wall clock; derive the value from a known instant so the test is zone-proof.
+  const local = (d: Date) => toLocalInputValue(d);
+  const sendAt = local(new Date("2030-01-11T03:30:00Z")); // 09:00 IST the next day
+
+  it("bunches into slots inside the window", () => {
+    const r = planSchedule({ selectedIds: ids, sendAt, staggerMinutes: "5", overrides: {}, now: nowUtc, window: win });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const t = ids.map((id) => r.plan.times[id]!.toISOString());
+    expect(t[0]).toBe("2030-01-11T03:30:00.000Z");
+    expect(t[1]).toBe("2030-01-11T03:30:00.000Z");
+    expect(t[2]).toBe("2030-01-11T03:35:00.000Z");
+    expect(t[23]).toBe("2030-01-11T04:25:00.000Z");
+    expect(r.plan.windowPlan).toMatchObject({ count: 24 });
+    expect(r.plan.windowPlan!.plan.slots).toBe(12);
+  });
+
+  it("moves a start outside the window to the next window open", () => {
+    const late = local(new Date("2030-01-11T08:00:00Z")); // 13:30 IST
+    const r = planSchedule({ selectedIds: ["a", "b"], sendAt: late, staggerMinutes: "5", overrides: {}, now: nowUtc, window: win });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.plan.times.a!.toISOString()).toBe("2030-01-12T03:30:00.000Z");
+  });
+
+  it("keeps the old arithmetic when stagger is 0 or the window is unknown", () => {
+    const zero = planSchedule({ selectedIds: ids.slice(0, 2), sendAt, staggerMinutes: "0", overrides: {}, now: nowUtc, window: win });
+    if (zero.ok) expect(zero.plan.windowPlan).toBeUndefined();
+    const unknown = planSchedule({ selectedIds: ["a", "b"], sendAt, staggerMinutes: "10", overrides: {}, now: nowUtc, window: null });
+    expect(unknown.ok).toBe(true);
+    if (unknown.ok) {
+      expect(unknown.plan.windowPlan).toBeUndefined();
+      expect(unknown.plan.times.b!.getTime() - unknown.plan.times.a!.getTime()).toBe(600_000);
+    }
+  });
+
+  it("checks the 90-day limit against the last planned time", () => {
+    const edge = local(new Date("2030-04-09T03:30:00Z"));
+    const r = planSchedule({ selectedIds: ["a"], sendAt: edge, staggerMinutes: "5", overrides: {}, now: new Date("2030-01-10T03:00:00Z"), window: win });
+    // 09:00 IST on 2030-04-09 is within 90 days; its next-day open after a 10:00 start would not be.
+    expect(r.ok).toBe(true);
+    const past = local(new Date("2030-04-09T05:00:00Z")); // after the window closes -> moves to 04-10 open, > 90 days from now
+    const r2 = planSchedule({ selectedIds: ["a"], sendAt: past, staggerMinutes: "5", overrides: {}, now: new Date("2030-01-10T03:00:00Z"), window: win });
+    expect(r2.ok).toBe(false);
+    if (!r2.ok) expect(r2.errors.stagger).toMatch(/90 days/);
+  });
+});

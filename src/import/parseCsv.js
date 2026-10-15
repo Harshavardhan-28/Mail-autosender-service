@@ -60,6 +60,33 @@ function tokenize(text) {
   return records;
 }
 
+// Shared by the CSV parser and the import commit (client-edited rows are re-checked here).
+// items: [{ row?, company, role, person, email, subject, mailText, followupText }] (followupText null/'' -> null).
+// -> {rows:[same shape, trimmed, `row` filled], errors:[{row, message}]}
+export function validateRows(items, { suppressed = new Set() } = {}) {
+  const rows = [];
+  const errors = [];
+  const seen = new Set();
+  items.forEach((item, n) => {
+    const row = item.row ?? n + 2;
+    const v = {};
+    for (const [, key] of COLUMNS) v[key] = String(item[key] ?? "").replace(/\r\n?/g, "\n").trim();
+    const fail = (message) => errors.push({ row, message });
+    for (const [name, key, required, singleLine] of COLUMNS) {
+      if (required && v[key] === "") return fail(`${name} is required`);
+      if (singleLine && /[\r\n\u0000-\u001f]/.test(v[key])) return fail(`${name} must be a single line without control characters`);
+      if (v[key].length > (singleLine ? MAX_FIELD : MAX_TEXT)) return fail(`${name} is too long`);
+    }
+    if (v.email.length > 254 || !EMAIL_RE.test(v.email)) return fail("Email is not a valid address");
+    const lower = v.email.toLowerCase();
+    if (seen.has(lower)) return fail("Duplicate email in this file");
+    if (suppressed.has(lower)) return fail("Email is on the suppression list");
+    seen.add(lower);
+    rows.push({ row, ...v, followupText: v.followupText === "" ? null : v.followupText });
+  });
+  return { rows, errors };
+}
+
 // -> {rows:[{row, company, role, person, email, subject, mailText, followupText}], errors:[{row, message}]}
 // `row` is the 1-based line-record number in the file (header = 1). Throws CsvFileError for file-level problems.
 export function parseCsv(buffer, { suppressed = new Set() } = {}) {
@@ -80,28 +107,10 @@ export function parseCsv(buffer, { suppressed = new Set() } = {}) {
   const dataRecords = records.slice(1);
   if (dataRecords.length > MAX_ROWS) throw new CsvFileError(`Too many rows: the limit is ${MAX_ROWS} per file`);
 
-  const rows = [];
-  const errors = [];
-  const seen = new Set();
-  dataRecords.forEach((rec, n) => {
-    const row = n + 2;
-    const v = {};
-    for (const [, key] of COLUMNS) {
-      const raw = index[key] === undefined ? "" : (rec[index[key]] ?? "");
-      v[key] = raw.replace(/\r\n?/g, "\n").trim();
-    }
-    const fail = (message) => errors.push({ row, message });
-    for (const [name, key, required, singleLine] of COLUMNS) {
-      if (required && v[key] === "") return fail(`${name} is required`);
-      if (singleLine && /[\r\n\u0000-\u001f]/.test(v[key])) return fail(`${name} must be a single line without control characters`);
-      if (v[key].length > (singleLine ? MAX_FIELD : MAX_TEXT)) return fail(`${name} is too long`);
-    }
-    if (v.email.length > 254 || !EMAIL_RE.test(v.email)) return fail("Email is not a valid address");
-    const lower = v.email.toLowerCase();
-    if (seen.has(lower)) return fail("Duplicate email in this file");
-    if (suppressed.has(lower)) return fail("Email is on the suppression list");
-    seen.add(lower);
-    rows.push({ row, ...v, followupText: v.followupText === "" ? null : v.followupText });
+  const raw = dataRecords.map((rec, n) => {
+    const item = { row: n + 2 };
+    for (const [, key] of COLUMNS) item[key] = index[key] === undefined ? "" : (rec[index[key]] ?? "");
+    return item;
   });
-  return { rows, errors };
+  return validateRows(raw, { suppressed });
 }

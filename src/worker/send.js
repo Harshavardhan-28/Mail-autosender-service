@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { buildFollowUpMailOptions, buildInitialMailOptions } from "../mailer.js";
-import { renderFollowup } from "../domain/template.js";
+import { followupSubject, renderFollowup } from "../domain/template.js";
 
 // Dry-run is lenient (unsigned preview mail). In real mode a configured signature that cannot be
 // read must stop the send: throws an error classified as a retryable pre-send failure (ENOENT/EACCES).
@@ -119,8 +119,7 @@ export function buildMail({ config, signatureHtml, contact, message, initialMess
       followUpText: rendered.text,
       messageId: initialMessageId,
     });
-    // Exactly one "Re: " prefix, even when the original subject or the template already carries some.
-    options.subject = `Re: ${rendered.subject.replace(/^\s*(re:\s*)+/i, "")}`;
+    options.subject = followupSubject(rendered.subject);
   }
   if (attachments.length) options.attachments = attachments;
   options.messageId = message.message_id;

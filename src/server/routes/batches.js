@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
-import { Router } from "express";
+import express, { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { HttpError } from "../errors.js";
-import { parseCsv, CsvFileError } from "../../import/parseCsv.js";
+import { parseCsv, validateRows, CsvFileError, MAX_ROWS } from "../../import/parseCsv.js";
 import { renderInitialPreview } from "../../domain/render.js";
 import { describeAttachments } from "../../domain/resumes.js";
-import { inTx, serializeBatch, serializeContact } from "../../domain/contacts.js";
+import { deleteBatch, inTx, serializeBatch, serializeContact } from "../../domain/contacts.js";
+import { buildConflicts, findMatches, insertBatch, resolveConflicts } from "../../domain/importBatch.js";
 
 const MAX_UPLOAD_BYTES = 1024 * 1024;
 const uuid = z.uuid();
@@ -39,6 +40,33 @@ const bodySchema = z.strictObject({
     .max(120)
     .regex(/^[^\p{Cc}]*$/u, "name must not contain control characters")
     .optional(),
+});
+
+const text = (max) => z.string().max(max);
+const commitBody = z.strictObject({
+  name: z
+    .string()
+    .trim()
+    .max(120)
+    .regex(/^[^\p{Cc}]*$/u, "name must not contain control characters")
+    .optional(),
+  filename: z.string().max(200).optional(),
+  rows: z
+    .array(
+      z.strictObject({
+        row: z.number().int().min(1).max(1_000_000).optional(),
+        company: text(1000),
+        role: text(1000),
+        person: text(1000),
+        email: text(1000),
+        subject: text(1000),
+        mailText: text(100_000),
+        followupText: text(100_000).nullable(),
+      }),
+    )
+    .min(1)
+    .max(MAX_ROWS),
+  resolutions: z.record(z.string().max(254), z.enum(["skip", "replace", "keep"])).optional(),
 });
 
 // multer decodes filenames as latin1; recover UTF-8 then strip anything unsafe for display.
@@ -106,29 +134,7 @@ export function batchesRouter({ pool, config }) {
           return { row: r.row, message: `Email is already in another batch (status: ${st})`, existingStatus: st };
         });
 
-      const result = await inTx(pool, async (db) => {
-        const b = await db.query(
-          "INSERT INTO batches(name, original_filename, created_by) VALUES ($1, $2, $3) RETURNING *",
-          [name, filename, req.session.userId],
-        );
-        const batch = b.rows[0];
-        const col = (k) => rows.map((r) => r[k]);
-        const inserted = await db.query(
-          `INSERT INTO contacts(batch_id, company, role, person, email, subject, mail_text, followup_text, created_at)
-           SELECT $1::uuid, u.company, u.role, u.person, u.email, u.subject, u.mail_text, u.followup_text, clock_timestamp() FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[]) WITH ORDINALITY AS u(company, role, person, email, subject, mail_text, followup_text, ord)
-           ORDER BY u.ord
-           RETURNING *`,
-          [batch.id, col("company"), col("role"), col("person"), col("email"), col("subject"), col("mailText"), col("followupText")],
-        );
-        await db.query(
-          "INSERT INTO events(contact_id, type, meta) SELECT id, 'imported', jsonb_build_object('batchId', $1::text) FROM unnest($2::uuid[]) AS id",
-          [batch.id, inserted.rows.map((r) => r.id)],
-        );
-        await db.query("INSERT INTO events(type, meta) VALUES ('batch_created', $1)", [
-          JSON.stringify({ batchId: batch.id, imported: inserted.rowCount, rejected: errors.length }),
-        ]);
-        return { batch, contacts: inserted.rows };
-      });
+      const result = await inTx(pool, (db) => insertBatch(db, { name, filename, userId: req.session.userId, rows, rejected: errors.length }));
       const attachments = await describeAttachments(pool, result.contacts.map((c) => c.id), config);
       res.status(201).json({
         batch: serializeBatch(result.batch),
@@ -136,6 +142,71 @@ export function batchesRouter({ pool, config }) {
         contacts: result.contacts.map((c) => ({ ...withPreview(c, attachments.get(c.id) ?? null), row: rowByEmail.get(c.email.toLowerCase()) ?? null })),
         errors,
         warnings,
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Parses and validates the upload and reports duplicates; writes nothing.
+  router.post("/preview", receiveUpload, async (req, res, next) => {
+    try {
+      if (!req.file) throw new HttpError(400, "A CSV file is required in the 'file' field");
+      const suggestedName = defaultBatchName(req.file.originalname);
+      const sup = await pool.query("SELECT email FROM suppressions");
+      let parsed;
+      try {
+        parsed = parseCsv(req.file.buffer, { suppressed: new Set(sup.rows.map((r) => r.email)) });
+      } catch (err) {
+        if (err instanceof CsvFileError) throw new HttpError(400, err.message);
+        throw err;
+      }
+      const { rows, errors } = parsed;
+      if (rows.length === 0) return res.status(422).json({ error: "No valid rows to import", errors });
+      const conflicts = buildConflicts(rows, await findMatches(pool, rows.map((r) => r.email)));
+      res.json({ filename: suggestedName + ".csv", suggestedName, rows, errors, conflicts });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Creates the batch from (possibly edited) preview rows, applying a decision per duplicate email. All or nothing.
+  // The global JSON parser skips this path (see app.js); 500 full-size rows exceed its 100kb limit.
+  router.post("/commit", express.json({ limit: "8mb" }), async (req, res, next) => {
+    try {
+      const body = commitBody.safeParse(req.body ?? {});
+      if (!body.success) throw new HttpError(400, body.error.issues[0]?.message ?? "Invalid request body");
+      const { rows: input, resolutions = {}, filename } = body.data;
+      const name = body.data.name || (filename ? defaultBatchName(filename) : "Imported batch");
+
+      const out = await inTx(pool, async (db) => {
+        const sup = await db.query("SELECT email FROM suppressions");
+        const { rows, errors } = validateRows(input, { suppressed: new Set(sup.rows.map((r) => r.email)) });
+        if (errors.length) return { refusal: { status: 422, body: { error: "Some rows are invalid", errors } } };
+        const matches = await findMatches(db, rows.map((r) => r.email), { lock: true });
+        const resolved = await resolveConflicts(db, rows, matches, resolutions);
+        if (resolved.refusal) return resolved;
+        if (resolved.toInsert.length === 0) return { refusal: { status: 422, body: { error: "Nothing to import: every row was skipped" } } };
+        const created = await insertBatch(db, {
+          name,
+          filename: filename ? defaultBatchName(filename) + ".csv" : null,
+          userId: req.session.userId,
+          rows: resolved.toInsert,
+          rejected: 0,
+        });
+        return { ...resolved, ...created };
+      });
+      if (out.refusal) return res.status(out.refusal.status).json(out.refusal.body);
+
+      const rowByEmail = new Map(out.toInsert.map((r) => [r.email.toLowerCase(), r.row]));
+      const attachments = await describeAttachments(pool, out.contacts.map((c) => c.id), config);
+      res.status(201).json({
+        batch: serializeBatch(out.batch),
+        contacts: out.contacts.map((c) => ({ ...withPreview(c, attachments.get(c.id) ?? null), row: rowByEmail.get(c.email.toLowerCase()) ?? null })),
+        errors: [],
+        warnings: out.warnings,
+        skipped: out.skipped,
+        replaced: out.replaced,
       });
     } catch (err) {
       next(err);
@@ -168,6 +239,18 @@ export function batchesRouter({ pool, config }) {
       const c = await pool.query("SELECT * FROM contacts WHERE batch_id = $1 ORDER BY created_at, id", [id.data]);
       const attachments = await describeAttachments(pool, c.rows.map((r) => r.id), config);
       res.json({ batch: serializeBatch(b.rows[0]), contacts: c.rows.map((r) => withPreview(r, attachments.get(r.id) ?? null)) });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.delete("/:id", async (req, res, next) => {
+    try {
+      const id = uuid.safeParse(req.params.id);
+      if (!id.success) throw new HttpError(400, "Invalid batch id");
+      const q = z.strictObject({ force: z.enum(["true", "false"]).optional() }).safeParse(req.query);
+      if (!q.success) throw new HttpError(400, "Invalid query parameters");
+      res.json(await deleteBatch(pool, id.data, { force: q.data.force === "true" }));
     } catch (err) {
       next(err);
     }

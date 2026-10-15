@@ -1,8 +1,10 @@
 import { HttpError } from "../server/errors.js";
 import { inTx, serializeContact } from "./contacts.js";
+import { nextWindowOpen, windowBoundsFor } from "./sendWindow.js";
 import { assertLiveResume, noResumeError, resolveResume } from "./resumes.js";
 
 export const MAX_DAYS_AHEAD = 90;
+export const OVERDUE_MINUTES = 60;
 const DAY_MS = 86_400_000;
 const ISO_INSTANT = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/;
 
@@ -44,6 +46,20 @@ export function validateSendAt(value, now = new Date()) {
 // count send times starting at `start`, `staggerMinutes` apart, in order.
 export function planStagger(start, count, staggerMinutes = 0) {
   return Array.from({ length: count }, (_, i) => new Date(start.getTime() + i * staggerMinutes * 60_000));
+}
+
+// Stagger as "one slot every N minutes, packed into the send window": the start moves to the next window opening
+// (if outside it), slots = how many N-minute steps fit before the window closes, and the emails are spread evenly
+// over them (ceil(count / slots) per slot, in order). Stagger 0 = everything at `start`, untouched.
+export function planWindowStagger(start, count, staggerMinutes, window) {
+  if (!(staggerMinutes > 0)) return { times: Array.from({ length: count }, () => new Date(start.getTime())), start, slots: 1, perSlot: count };
+  const from = nextWindowOpen(window, start);
+  const step = staggerMinutes * 60_000;
+  const { close } = windowBoundsFor(window, from);
+  const slots = Math.max(1, Math.floor((close.getTime() - from.getTime()) / step));
+  const perSlot = Math.max(1, Math.ceil(count / slots));
+  const times = Array.from({ length: count }, (_, i) => new Date(from.getTime() + Math.floor(i / perSlot) * step));
+  return { times, start: from, slots, perSlot };
 }
 
 export class RefusedError extends HttpError {
@@ -93,10 +109,10 @@ function mapUnique(err) {
 // refused contact with a reason.
 // `resumeId`: undefined = leave the batch choice alone, null = clear it, uuid = set it. `requireResume`: refuse when
 // a contact would go out with no resume at all (real mode without a legacy RESUME_PATH).
-export async function scheduleBulk(pool, { batchId, contactIds, sendAt, staggerMinutes = 0, resumeId, requireResume = false }) {
+export async function scheduleBulk(pool, { batchId, contactIds, sendAt, staggerMinutes = 0, times: plannedTimes, resumeId, requireResume = false }) {
   const b = await pool.query("SELECT id FROM batches WHERE id = $1", [batchId]);
   if (!b.rowCount) throw new HttpError(404, "Batch not found");
-  const times = planStagger(sendAt, contactIds.length, staggerMinutes);
+  const times = plannedTimes ?? planStagger(sendAt, contactIds.length, staggerMinutes);
   try {
     return await inTx(pool, async (db) => {
       const rows = await lockContactsForScheduling(db, contactIds);
@@ -345,4 +361,56 @@ export async function syncFollowup(pool, contactId, { enabled, delayDays }) {
   } catch (err) {
     throw mapUnique(err);
   }
+}
+
+// Scheduled messages whose time passed more than OVERDUE_MINUTES ago (window closed, pacing/cap did not fit them).
+export async function listOverdue(pool, now = new Date()) {
+  const cutoff = new Date(now.getTime() - OVERDUE_MINUTES * 60_000);
+  const [{ rows: cnt }, { rows }] = await Promise.all([
+    pool.query("SELECT count(*)::int AS n FROM messages WHERE state = 'scheduled' AND scheduled_for <= $1", [cutoff]),
+    pool.query(
+      `SELECT m.id, m.contact_id, m.kind, m.scheduled_for, c.email, c.person, b.name AS batch_name
+         FROM messages m JOIN contacts c ON c.id = m.contact_id JOIN batches b ON b.id = c.batch_id
+        WHERE m.state = 'scheduled' AND m.scheduled_for <= $1
+        ORDER BY m.scheduled_for, m.created_at, m.id LIMIT 500`,
+      [cutoff],
+    ),
+  ]);
+  return {
+    count: cnt[0].n,
+    overdueMinutes: OVERDUE_MINUTES,
+    messages: rows.map((r) => ({
+      id: r.id, contactId: r.contact_id, email: r.email, person: r.person, kind: r.kind, scheduledFor: r.scheduled_for, batchName: r.batch_name,
+    })),
+  };
+}
+
+// Moves overdue scheduled messages to `start` (or the next window opening), packed by planWindowStagger.
+// `messageIds` undefined = every overdue message. Anything no longer scheduled/overdue once locked is skipped.
+export async function rescheduleOverdue(pool, { window, now, sendAt, staggerMinutes, messageIds }) {
+  const cutoff = new Date(now.getTime() - OVERDUE_MINUTES * 60_000);
+  return inTx(pool, async (db) => {
+    // Lock in id order (deadlock-safe); the WHERE is re-evaluated against the locked row version.
+    const { rows } = await db.query(
+      `SELECT * FROM messages
+        WHERE state = 'scheduled' AND scheduled_for <= $1 AND ($2::uuid[] IS NULL OR id = ANY($2::uuid[]))
+        ORDER BY id FOR UPDATE`,
+      [cutoff, messageIds ?? null],
+    );
+    if (!rows.length) return { rescheduled: 0, messages: [], plan: null };
+    rows.sort((a, b) => a.scheduled_for - b.scheduled_for || a.created_at - b.created_at || (a.id < b.id ? -1 : 1));
+    const plan = planWindowStagger(sendAt ?? nextWindowOpen(window, now), rows.length, staggerMinutes, window);
+    const last = plan.times.at(-1);
+    if (last.getTime() > now.getTime() + MAX_DAYS_AHEAD * DAY_MS) throw bad(`Rescheduled times must all be within ${MAX_DAYS_AHEAD} days`);
+    const out = [];
+    for (const [i, r] of rows.entries()) {
+      const upd = await db.query("UPDATE messages SET scheduled_for = $2 WHERE id = $1 RETURNING *", [r.id, plan.times[i]]);
+      await db.query("INSERT INTO events(contact_id, type, meta) VALUES ($1, 'rescheduled', $2)", [
+        r.contact_id,
+        JSON.stringify({ messageId: r.id, scheduledFor: plan.times[i].toISOString(), source: "overdue" }),
+      ]);
+      out.push(serializeMessage(upd.rows[0]));
+    }
+    return { rescheduled: out.length, messages: out, plan: { start: plan.start.toISOString(), slots: plan.slots, perSlot: plan.perSlot, staggerMinutes, window } };
+  });
 }

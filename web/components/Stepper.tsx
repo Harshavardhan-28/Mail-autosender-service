@@ -1,7 +1,7 @@
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const STEPS = ["Upload CSV", "Preview", "Schedule"] as const;
+const STEPS = ["Upload & review", "Preview", "Schedule"] as const;
 
 /** Three-step progress: `current` is 1-based; steps before it show a check. `current` 4 means all done. */
 export function Stepper({ current, className }: { current: 1 | 2 | 3 | 4; className?: string }) {
