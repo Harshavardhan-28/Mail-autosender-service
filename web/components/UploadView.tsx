@@ -5,13 +5,13 @@ import { api, ApiError } from "@/lib/api";
 import { checkCsvFile, MAX_ROWS } from "@/lib/upload";
 import { plural } from "@/lib/format";
 import type { CommitResult, ImportConflict, ImportRow, PreviewResult, Resolution, Resume, RowIssue, SendWindowInfo } from "@/lib/types";
-import { Download, FileSpreadsheet, Loader2, RotateCcw, Upload as UploadIcon } from "lucide-react";
+import { ArrowRight, Download, FileSpreadsheet, Loader2, RotateCcw, Upload as UploadIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BatchScheduler } from "./BatchScheduler";
 import { DuplicateDialog } from "./DuplicateDialog";
 import { ImportReview } from "./ImportReview";
 import { Notice } from "./Notice";
-import { PageHeader } from "./PageHeader";
+import { PageBody, PageHeader } from "./PageHeader";
 import { Stepper } from "./Stepper";
 import { Button } from "@/components/ui/button";
 
@@ -32,6 +32,7 @@ export function UploadView() {
   const [resumes, setResumes] = useState<Resume[]>([]);
 
   const [sendWindow, setSendWindow] = useState<SendWindowInfo | null>(null);
+  const [schedStep, setSchedStep] = useState<3 | 4>(3);
 
   useEffect(() => {
     api.listResumes().then(setResumes, () => {});
@@ -146,8 +147,12 @@ export function UploadView() {
               Upload another file
             </Button>
           }
-        />
-        <BatchScheduler upload={result} resumes={resumes} sendWindow={sendWindow} />
+        >
+          <Stepper current={schedStep} />
+        </PageHeader>
+        <PageBody max="max-w-[1100px]">
+          <BatchScheduler upload={result} resumes={resumes} sendWindow={sendWindow} onStep={setSchedStep} />
+        </PageBody>
       </div>
     );
   }
@@ -155,8 +160,10 @@ export function UploadView() {
   if (preview) {
     return (
       <div>
-        <PageHeader title="Review your import" description={`${file?.name ?? preview.filename}. Check the rows, fix anything that is wrong, then save.`} />
-        <Stepper current={1} />
+        <PageHeader eyebrow="Create / Upload" title="Import contacts" description={`${file?.name ?? preview.filename}. Check the rows, fix anything that is wrong, then save.`}>
+          <Stepper current={2} />
+        </PageHeader>
+        <PageBody max="max-w-[1100px]">
         <ImportReview
           preview={preview}
           saving={saving}
@@ -180,72 +187,96 @@ export function UploadView() {
           }
         />
         {asking && draft && <DuplicateDialog key={asking.round} conflicts={asking.conflicts} rows={draft.rows} onDone={onResolved} onCancel={() => setAsking(null)} />}
+        </PageBody>
       </div>
     );
   }
 
+  const REQUIRED = ["company", "role", "person", "email", "subject", "mailText", "followupText"];
   return (
-    <div className="mx-auto max-w-2xl">
-      <PageHeader
-        eyebrow="Create / Upload"
-        title="Upload a CSV"
-        description={`Columns: Company, Role, Person, Email, Subject, Mail Text, and optionally Follow-up Text. Up to ${MAX_ROWS} rows, 1 MB.`}
-      />
-      <Stepper current={1} />
+    <div>
+      <PageHeader eyebrow="Create / Upload" title="Import contacts" description={`Columns: Company, Role, Person, Email, Subject, Mail Text, and optionally Follow-up Text. Up to ${MAX_ROWS} rows, 1 MB.`}>
+        <Stepper current={1} />
+      </PageHeader>
+      <PageBody max="max-w-[1100px]" className="pt-[26px]">
+        <div className="grid gap-[18px] lg:grid-cols-[minmax(0,1.6fr)_minmax(260px,1fr)]">
+          <div className="space-y-4">
+            <label
+              className={cn(
+                "group flex cursor-pointer flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-[#c3c7f2] bg-card px-6 py-14 text-center transition-colors dark:border-[#3a3f7a]",
+                "hover:border-primary hover:bg-st-indigo-bg/40 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/25",
+                dragging && "border-primary bg-st-indigo-bg/60",
+                file && "border-solid border-primary/40",
+              )}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragging(true);
+              }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={onDrop}
+            >
+              <input ref={input} className="sr-only" type="file" accept=".csv,text/csv" onChange={(e) => pick(e.target.files?.[0])} />
+              <span className="grid size-14 place-items-center rounded-2xl bg-st-indigo-bg text-primary">
+                {file ? <FileSpreadsheet aria-hidden="true" className="size-[26px]" /> : <UploadIcon aria-hidden="true" className="size-[26px]" />}
+              </span>
+              <span className="text-base font-semibold">{file ? file.name : "Drop your CSV here"}</span>
+              <span className="text-[13px] text-muted-foreground">
+                {file ? (
+                  `${(file.size / 1024).toFixed(1)} KB · choose again to replace`
+                ) : (
+                  <>
+                    or <span className="font-semibold text-primary">browse files</span> · up to {MAX_ROWS} rows
+                  </>
+                )}
+              </span>
+            </label>
 
-      <div className="space-y-5 rounded-lg border bg-card p-5">
-        <label
-          className={cn(
-            "group flex cursor-pointer flex-col items-center gap-1.5 rounded-lg border border-dashed px-6 py-10 text-center transition-colors",
-            "hover:border-primary/60 hover:bg-accent/50 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/25",
-            dragging && "border-primary bg-accent",
-            file && "border-solid bg-muted/50",
-          )}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragging(true);
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
-        >
-          <input ref={input} className="sr-only" type="file" accept=".csv,text/csv" onChange={(e) => pick(e.target.files?.[0])} />
-          <span className="mb-1 grid size-9 place-items-center rounded-lg border bg-background text-muted-foreground group-hover:text-foreground">
-            {file ? <FileSpreadsheet aria-hidden="true" className="size-4.5" /> : <UploadIcon aria-hidden="true" className="size-4.5" />}
-          </span>
-          <span className="text-sm font-medium">{file ? file.name : "Drop a CSV here"}</span>
-          <span className="text-[13px] text-muted-foreground">{file ? `${(file.size / 1024).toFixed(1)} KB · choose again to replace` : "or click to choose a file"}</span>
-        </label>
-
-        {error && (
-          <Notice tone="danger" role="alert" title={error}>
-            {rowErrors.length > 0 && (
-              <ul className="max-h-60 space-y-1 overflow-y-auto pt-1">
-                {rowErrors.map((e) => (
-                  <li key={e.row} className="flex gap-3">
-                    <span className="w-14 shrink-0 font-mono text-xs text-muted-foreground">Row {e.row}</span>
-                    <span>{e.message}</span>
-                  </li>
-                ))}
-              </ul>
+            {error && (
+              <Notice tone="danger" role="alert" title={error}>
+                {rowErrors.length > 0 && (
+                  <ul className="max-h-60 space-y-1 overflow-y-auto pt-1">
+                    {rowErrors.map((e) => (
+                      <li key={e.row} className="flex gap-3">
+                        <span className="w-14 shrink-0 font-mono text-xs text-muted-foreground">Row {e.row}</span>
+                        <span>{e.message}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Notice>
             )}
-          </Notice>
-        )}
 
-        <div className="flex items-center justify-between gap-3">
-          <a
-            href="/contacts-template.csv"
-            download
-            className="inline-flex items-center gap-1.5 rounded-sm text-[13px] font-medium text-accent-text underline-offset-2 hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/30 focus-visible:outline-none"
-          >
-            <Download aria-hidden="true" className="size-3.5" />
-            Download CSV template
-          </a>
-          <Button disabled={!file || busy} onClick={onPreview}>
-            {busy && <Loader2 className="animate-spin" />}
-            {busy ? "Reading…" : "Preview"}
-          </Button>
+            <div className="flex justify-end">
+              <Button disabled={!file || busy} onClick={onPreview}>
+                {busy && <Loader2 className="animate-spin" />}
+                {busy ? "Reading…" : "Preview"}
+              </Button>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3.5">
+            <div className="rounded-[14px] border bg-card px-[18px] py-4">
+              <h2 className="mb-2.5 text-sm font-semibold">Required columns</h2>
+              <div className="flex flex-wrap gap-1.5">
+                {REQUIRED.map((c, i) => (
+                  <span key={c} className={cn("rounded-md px-2 py-[3px] font-mono text-xs font-medium", i < 6 ? "bg-st-indigo-bg text-st-indigo" : "bg-secondary text-muted-foreground")}>
+                    {c}
+                  </span>
+                ))}
+              </div>
+              <p className="mt-2.5 text-xs text-muted-foreground">Grey columns are optional. Follow-up text falls back to your template in Settings.</p>
+            </div>
+            <a href="/contacts-template.csv" download className="flex items-center gap-2.5 rounded-[14px] border bg-card px-[18px] py-3.5 transition-colors hover:bg-accent/50">
+              <Download aria-hidden="true" className="size-4 text-primary" />
+              <span className="flex-1">
+                <span className="block text-[13.5px] font-semibold">Download CSV template</span>
+                <span className="block text-xs text-muted-foreground">contacts-template.csv</span>
+              </span>
+              <ArrowRight aria-hidden="true" className="size-[15px] text-muted-foreground" />
+            </a>
+          </div>
         </div>
-      </div>
+      </PageBody>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { api, ApiError } from "@/lib/api";
 import { checkSendTime, planSchedule, toLocalInputValue, MAX_DAYS_AHEAD, MAX_STAGGER_MINUTES } from "@/lib/schedule";
@@ -18,7 +18,6 @@ import { CalendarClock, ChevronRight, Loader2, Paperclip } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { EmailLetter, IssueList } from "./EmailLetter";
 import { Notice } from "./Notice";
-import { Stepper } from "./Stepper";
 import { TextButton } from "./TextButton";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -34,6 +33,8 @@ type Props = {
   now?: () => Date;
   /** An existing batch reopened from Contacts: no upload stepper and no CSV row numbers. */
   reopened?: boolean;
+  /** Reports the flow step (3 while scheduling, 4 once emails are scheduled) so the page header can show it. */
+  onStep?: (step: 3 | 4) => void;
 };
 
 type Outcome = {
@@ -45,7 +46,7 @@ function SelectAll({ state, onChange }: { state: "none" | "some" | "all"; onChan
   return <Checkbox aria-label="Select all" checked={state === "all" ? true : state === "some" ? "indeterminate" : false} onCheckedChange={(v) => onChange(v === true)} />;
 }
 
-export function BatchScheduler({ upload, resumes = [], sendWindow = null, now = () => new Date(), reopened = false }: Props) {
+export function BatchScheduler({ upload, resumes = [], sendWindow = null, now = () => new Date(), reopened = false, onStep }: Props) {
   const rows = useMemo(() => buildPreviewRows(upload.contacts, upload.warnings), [upload]);
   const [selected, setSelected] = useState<string[]>(() => initialSelection(rows));
   const [sendAt, setSendAt] = useState("");
@@ -140,11 +141,13 @@ export function BatchScheduler({ upload, resumes = [], sendWindow = null, now = 
   const n = selected.length;
   const canConfirm = plan.ok && !busy;
 
-  const stepNow = outcome ? 4 : sendAt ? 3 : 2;
+  const stepNow: 3 | 4 = outcome ? 4 : 3;
+  useEffect(() => {
+    if (!reopened) onStep?.(stepNow);
+  }, [reopened, stepNow, onStep]);
 
   return (
     <div>
-      {!reopened && <Stepper current={stepNow} />}
       <div className="space-y-5">
         {(upload.errors.length > 0 || upload.warnings.length > 0) && (
           <section className="space-y-3" aria-label="Import problems">
@@ -180,7 +183,7 @@ export function BatchScheduler({ upload, resumes = [], sendWindow = null, now = 
           </section>
         )}
 
-        <section className="rounded-lg border bg-card" aria-labelledby="h-preview">
+        <section className="rounded-[14px] border bg-card" aria-labelledby="h-preview">
           <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 border-b px-4 py-3.5">
             <div className="space-y-0.5">
               <h2 id="h-preview" className="text-sm font-medium">
@@ -371,7 +374,7 @@ export function BatchScheduler({ upload, resumes = [], sendWindow = null, now = 
           </Notice>
         )}
 
-        <section className="rounded-lg border bg-card p-4" aria-label="Schedule">
+        <section className="rounded-[14px] border bg-card p-4" aria-label="Schedule">
           <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)]">
             <div className="space-y-1.5">
               <Label htmlFor="send-at">Send at</Label>
