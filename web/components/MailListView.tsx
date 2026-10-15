@@ -132,6 +132,8 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
+  // Company chips filter the rows already loaded (the API has no company filter).
+  const [company, setCompany] = useState("");
   const reload = useCallback(() => setTick((t) => t + 1), []);
 
   // Search as you type, after a short pause.
@@ -185,6 +187,9 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
   const to = Math.min(page * PAGE_SIZE, total);
   const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const filtered = q !== "" || kind !== "";
+  const companies = data ? [...new Set(data.mails.map((m) => m.contact.company))].sort() : [];
+  const activeCompany = companies.includes(company) ? company : "";
+  const visible = data ? data.mails.filter((m) => !activeCompany || m.contact.company === activeCompany) : [];
   const backTo = listQueryString({ tab, q, kind, page });
 
   return (
@@ -265,6 +270,31 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
         </div>
       </form>
 
+      {companies.length > 1 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Company">
+          <span className="mr-1 text-xs font-semibold text-muted-foreground">Company</span>
+          {["", ...companies].map((c) => {
+            const on = activeCompany === c;
+            const n = c ? data!.mails.filter((m) => m.contact.company === c).length : data!.mails.length;
+            return (
+              <button
+                key={c || "all"}
+                type="button"
+                aria-pressed={on}
+                onClick={() => setCompany(c)}
+                className={cn(
+                  "inline-flex h-[30px] items-center gap-1.5 rounded-full border px-3 text-[12.5px] font-medium whitespace-nowrap transition-colors",
+                  on ? "border-foreground bg-foreground text-background" : "bg-card hover:bg-accent",
+                )}
+              >
+                {c || "All companies"}
+                <span className="opacity-65">{n}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {error && (
         <Notice tone="danger" role="alert" className="mb-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -301,7 +331,7 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
         ) : (
           data && (
             <ul aria-label={`${TABS.find((t) => t.key === tab)!.label} mail`} className={cn("divide-y", loading && "opacity-60")}>
-              {data.mails.map((m) => (
+              {visible.map((m) => (
                 <MailItem key={m.id} mail={m} from={backTo} />
               ))}
             </ul>
