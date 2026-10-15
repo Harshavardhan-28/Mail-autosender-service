@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { HttpError } from "../errors.js";
 import { describeAttachments } from "../../domain/resumes.js";
-import { CONTACT_STATUSES, markReplied, optOut, serializeContact } from "../../domain/contacts.js";
+import { CONTACT_STATUSES, deleteContacts, markReplied, optOut, serializeContact } from "../../domain/contacts.js";
 
 const uuid = z.uuid();
 
@@ -12,6 +12,12 @@ const listQuery = z.strictObject({
   batchId: uuid.optional(),
   page: z.coerce.number().int().min(1).max(100000).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(25),
+});
+
+const forceQuery = z.strictObject({ force: z.enum(["true", "false"]).optional() });
+const bulkDeleteBody = z.strictObject({
+  ids: z.array(uuid).min(1).max(500).refine((a) => new Set(a).size === a.length, "ids must be unique"),
+  force: z.boolean().optional(),
 });
 
 const escapeLike = (s) => s.replace(/[\\%_]/g, (m) => `\\${m}`);
@@ -70,6 +76,27 @@ export function contactsRouter({ pool, config = {} }) {
     if (!id.success) throw new HttpError(400, "Invalid contact id");
     return id.data;
   };
+
+  router.delete("/:id", async (req, res, next) => {
+    try {
+      const id = idParam(req);
+      const q = forceQuery.safeParse(req.query);
+      if (!q.success) throw new HttpError(400, "Invalid query parameters");
+      res.json(await deleteContacts(pool, [id], { force: q.data.force === "true" }));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/delete", async (req, res, next) => {
+    try {
+      const body = bulkDeleteBody.safeParse(req.body ?? {});
+      if (!body.success) throw new HttpError(400, body.error.issues[0]?.message ?? "Invalid request body");
+      res.json(await deleteContacts(pool, body.data.ids, { force: body.data.force === true }));
+    } catch (err) {
+      next(err);
+    }
+  });
 
   router.post("/:id/mark-replied", async (req, res, next) => {
     try {

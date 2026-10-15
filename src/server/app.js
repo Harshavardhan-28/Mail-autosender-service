@@ -90,7 +90,9 @@ export function createApp({ pool, config, mailer, checkReply, resumeStorage, log
     res.set("Cache-Control", "no-store");
     next();
   });
-  app.use(express.json({ limit: "100kb" }));
+  // The import commit carries up to 500 full-size rows; its router mounts a larger parser after auth/CSRF.
+  const smallJson = express.json({ limit: "100kb" });
+  app.use((req, res, next) => (req.method === "POST" && req.path === "/api/batches/commit" ? next() : smallJson(req, res, next)));
 
   // Anonymous GET /csrf creates a session row, so it is throttled per IP too (generous: a page load fetches it once).
   app.use(
