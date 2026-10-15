@@ -7,6 +7,7 @@ import { requireAuth, requireCsrf } from "../auth/middleware.js";
 import { authRouter } from "../auth/routes.js";
 import { batchesRouter } from "./routes/batches.js";
 import { contactsRouter } from "./routes/contacts.js";
+import { mailsRouter } from "./routes/mails.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { resumesRouter } from "./routes/resumes.js";
 import { schedulingRouter } from "./routes/scheduling.js";
@@ -124,6 +125,7 @@ export function createApp({ pool, config, mailer, checkReply, resumeStorage, log
   app.use("/api/resumes", resumesRouter({ pool, storage: resumeStorage ?? createResumeStorage(config) }));
   app.use("/api/batches", batchesRouter({ pool, config }));
   app.use("/api/contacts", contactsRouter({ pool, config }));
+  app.use("/api", mailsRouter({ pool, config }));
   app.use("/api", schedulingRouter({ pool, config }));
   app.use("/api", settingsRouter({ pool, config }));
   app.use("/api", dashboardRouter({ pool, config, checkReply, logger }));
