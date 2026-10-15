@@ -26,7 +26,7 @@ const em = (p = "u") => `${p}${++n}@example.com`;
 test("every scheduling route requires auth and CSRF", async () => {
   const anon = t.client();
   const id = "00000000-0000-4000-8000-000000000000";
-  for (const [m, p] of [["POST", `/api/batches/${id}/schedule`], ["PUT", `/api/contacts/${id}/schedule`], ["PUT", `/api/contacts/${id}/followup`], ["DELETE", `/api/messages/${id}`], ["GET", "/api/template/followup"], ["PUT", "/api/template/followup"]]) {
+  for (const [m, p] of [["POST", `/api/batches/${id}/schedule`], ["PUT", `/api/contacts/${id}/schedule`], ["PUT", `/api/contacts/${id}/followup`], ["DELETE", `/api/messages/${id}`], ["GET", "/api/messages/overdue"], ["POST", "/api/messages/reschedule-overdue"], ["GET", "/api/template/followup"], ["PUT", "/api/template/followup"]]) {
     assert.equal((await anon.raw(m, p)).status, 401, `${m} ${p}`);
   }
   const noCsrf = t.client();
@@ -45,10 +45,12 @@ test("ids are case-insensitive: uppercase UUIDs work and a differently-cased dup
   assert.equal(one.status, 200, one.text);
 });
 
+// Stagger is window-bunched now (see windowStagger.test.js): slots every N minutes inside the send window, contactIds order kept.
 test("bulk schedule creates scheduled messages, staggered in contactIds order", async () => {
   const { batchId, contacts } = await seedBatch(t.pool, [em(), em(), em()]);
   const order = [contacts[2].id, contacts[0].id, contacts[1].id];
-  const sendAt = future(2 * D);
+  const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date(Date.now() + 2 * D));
+  const sendAt = new Date(`${day}T09:00:00+05:30`).toISOString(); // opening of the default 09:00-10:00 IST window
   const r = await bulk(batchId, { contactIds: order, sendAt, staggerMinutes: 10 });
   assert.equal(r.status, 201, r.text);
   const base = new Date(sendAt).getTime();

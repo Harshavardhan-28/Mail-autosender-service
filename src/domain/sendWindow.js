@@ -41,6 +41,53 @@ export function isInSendWindow(window, now = new Date()) {
   return m >= minutesOf(window.start) && m < minutesOf(window.end);
 }
 
+// Offset of `tz` from UTC at `instant`, in ms (local wall clock read as UTC, minus the real instant, to the second).
+function tzOffsetMs(tz, instant) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+  }).formatToParts(instant);
+  const get = (type) => Number(parts.find((p) => p.type === type).value);
+  const asUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour") % 24, get("minute"), get("second"));
+  return asUtc - Math.floor(instant.getTime() / 1000) * 1000;
+}
+
+// The instant at which the wall clock in `tz` reads y-m-d hh:mm. The offset is re-read at the guess (twice), so a
+// DST change between the naive guess and the real instant is accounted for.
+export function zonedInstant(tz, y, m, d, hh, mm) {
+  const naive = Date.UTC(y, m - 1, d, hh, mm);
+  let t = naive;
+  for (let i = 0; i < 2; i++) t = naive - tzOffsetMs(tz, new Date(t));
+  return new Date(t);
+}
+
+// Local calendar date (in tz) of an instant.
+function localYmd(tz, instant) {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(instant);
+  const get = (type) => Number(parts.find((p) => p.type === type).value);
+  return { y: get("year"), m: get("month"), d: get("day") };
+}
+
+const boundsOn = (window, { y, m, d }) => {
+  const [sh, sm] = window.start.split(":").map(Number);
+  const [eh, em] = window.end.split(":").map(Number);
+  return { open: zonedInstant(window.tz, y, m, d, sh, sm), close: zonedInstant(window.tz, y, m, d, eh, em) };
+};
+
+// Open/close instants of the window on the local day (in window.tz) that contains `instant`; close is exclusive.
+export function windowBoundsFor(window, instant) {
+  return boundsOn(window, localYmd(window.tz, instant));
+}
+
+// First instant >= `instant` at which sending is allowed.
+export function nextWindowOpen(window, instant) {
+  const day = localYmd(window.tz, instant);
+  const { open, close } = boundsOn(window, day);
+  if (instant.getTime() < open.getTime()) return open;
+  if (instant.getTime() < close.getTime()) return instant;
+  const next = new Date(Date.UTC(day.y, day.m - 1, day.d + 1));
+  return boundsOn(window, { y: next.getUTCFullYear(), m: next.getUTCMonth() + 1, d: next.getUTCDate() }).open;
+}
+
 export const windowLabel = (w) => `${w.start}–${w.end} ${w.tz}`;
 
 export async function getSendWindow(db) {
