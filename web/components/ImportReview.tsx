@@ -24,6 +24,8 @@ const SHORT_FIELDS: { key: Exclude<FieldKey, "mailText" | "followupText">; label
 
 type Props = {
   preview: PreviewResult;
+  /** Name typed on the file step; empty = use the suggested name. */
+  initialName?: string;
   saving: boolean;
   /** Save failure to show above the buttons (the edits are kept). */
   error?: React.ReactNode;
@@ -32,8 +34,8 @@ type Props = {
 };
 
 /** Step between choosing a file and saving it: nothing is written until "Save to database". */
-export function ImportReview({ preview, saving, error, onBack, onSave }: Props) {
-  const [name, setName] = useState(preview.suggestedName);
+export function ImportReview({ preview, initialName, saving, error, onBack, onSave }: Props) {
+  const [name, setName] = useState(initialName || preview.suggestedName);
   const [rows, setRows] = useState<ImportRow[]>(preview.rows);
   const [open, setOpen] = useState<Set<number>>(new Set());
 

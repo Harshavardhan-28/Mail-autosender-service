@@ -14,10 +14,13 @@ import { Notice } from "./Notice";
 import { PageBody, PageHeader } from "./PageHeader";
 import { Stepper } from "./Stepper";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 export function UploadView() {
   const input = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
+  const [batchName, setBatchName] = useState("");
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rowErrors, setRowErrors] = useState<RowIssue[]>([]);
@@ -115,6 +118,7 @@ export function UploadView() {
     setAsking(null);
     setSaveError(null);
     setFile(null);
+    setBatchName("");
     setError(null);
     setRowErrors([]);
     if (input.current) input.current.value = "";
@@ -166,6 +170,7 @@ export function UploadView() {
         <PageBody max="max-w-[1100px]">
         <ImportReview
           preview={preview}
+          initialName={batchName.trim()}
           saving={saving}
           onBack={back}
           onSave={onSave}
@@ -230,6 +235,11 @@ export function UploadView() {
                 )}
               </span>
             </label>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="batch-name">Batch name (optional)</Label>
+              <Input id="batch-name" maxLength={120} value={batchName} onChange={(e) => setBatchName(e.target.value)} placeholder="Defaults to the file name" />
+            </div>
 
             {error && (
               <Notice tone="danger" role="alert" title={error}>
