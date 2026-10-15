@@ -144,7 +144,7 @@ async function doSweep({ pool, config, checkReply, openChecker, logger = console
   } finally {
     await checker.close().catch(() => {});
   }
-  if (stopped) return summary; // shutdown: say nothing about sweep health
+  if (stopped) return { ...summary, stopped: true }; // shutdown or time budget: say nothing about sweep health
   if (fatal) {
     await record({ ok: false, errorCode: String(fatal.code ?? fatal.name ?? "Error"), rowErrors: summary.rowErrors });
     return { ...summary, error: true, ok: false };

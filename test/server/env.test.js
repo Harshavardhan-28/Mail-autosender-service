@@ -208,6 +208,13 @@ test("INTERNAL_TICK_DEADLINE_SECONDS, SEND_WINDOW_ENFORCED and MIGRATE_ON_START 
   assert.throws(() => loadServerConfig({ ...base, MIGRATE_ON_START: "maybe" }), /MIGRATE_ON_START/);
 });
 
+test("INTERNAL_SWEEP_DEADLINE_SECONDS defaults to 420 and is an integer 30..3600", () => {
+  assert.equal(loadServerConfig({ ...base }).internalSweepDeadlineSeconds, 420);
+  assert.equal(loadServerConfig({ ...base, INTERNAL_SWEEP_DEADLINE_SECONDS: "30" }).internalSweepDeadlineSeconds, 30);
+  assert.equal(loadServerConfig({ ...base, INTERNAL_SWEEP_DEADLINE_SECONDS: "3600" }).internalSweepDeadlineSeconds, 3600);
+  for (const v of ["29", "3601", "x", "1.5"]) assert.throws(() => loadServerConfig({ ...base, INTERNAL_SWEEP_DEADLINE_SECONDS: v }), /INTERNAL_SWEEP_DEADLINE_SECONDS/, v);
+});
+
 test("SIGNATURE_HTML replaces SIGNATURE_PATH in real-mode validation and is size-capped", () => {
   const creds = { GMAIL_USER: "a@gmail.com", GMAIL_APP_PASSWORD: "pw", DRY_RUN: "false", RESUME_PATH: files.RESUME_PATH };
   assert.throws(() => loadServerConfig({ ...base, ...creds }), /SIGNATURE_PATH/);

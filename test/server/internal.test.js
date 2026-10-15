@@ -282,8 +282,41 @@ test("/internal/sweep honours shutdown (stops before checking anything)", async 
     const r = await fetch(t2.url + "/internal/sweep", { method: "POST", headers: { authorization: "Bearer good" } });
     assert.equal(r.status, 200);
     assert.equal(checked, 0);
+    assert.equal((await r.json()).result.stopped, true);
   } finally {
     await t2.close();
+  }
+});
+
+test("/internal/sweep stops at its time budget: 200, stopped:true in the response and the log, checks cut short", async () => {
+  const { default: express } = await import("express");
+  const { internalRouter } = await import("../../src/server/routes/internal.js");
+  await dueInitials(3);
+  await t.pool.query("UPDATE contacts SET status='sent'");
+  await t.pool.query("UPDATE messages SET state='sent', sent_at=now(), message_id='<a@b>'");
+  let clock = Date.parse("2026-10-15T10:00:00Z");
+  let checked = 0;
+  const lines = [];
+  const logger = { info: (m, f) => lines.push(f), warn() {}, error() {}, debug() {} };
+  const checkReply = async () => { checked++; clock += 20_000; return null; }; // each check burns 20 s of the 30 s budget
+  const app = express();
+  app.use("/internal", internalRouter({
+    pool: t.pool, logger, checkReply, now: () => new Date(clock),
+    config: { dryRun: false, internalAudience: AUD, internalInvokerSa: SA, internalSweepDeadlineSeconds: 30 },
+    verify: async () => PAYLOADS.good,
+  }));
+  const server = await new Promise((res) => { const s = app.listen(0, () => res(s)); });
+  try {
+    const r = await fetch(`http://127.0.0.1:${server.address().port}/internal/sweep`, { method: "POST", headers: { authorization: "Bearer good" } });
+    const j = await r.json();
+    assert.equal(r.status, 200);
+    assert.equal(j.ok, true);
+    assert.equal(j.result.stopped, true);
+    assert.equal(checked, 2, "stopped once the budget was spent, before the third candidate");
+    assert.equal(lines.find((f) => f?.event === "internal_sweep")?.stopped, true);
+    assert.equal((await t.pool.query("SELECT 1 FROM settings WHERE key='sweep_state'")).rowCount, 0, "a cut-short sweep records nothing");
+  } finally {
+    await new Promise((r) => server.close(r));
   }
 });
 

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createTestDb } from "../helpers/db.js";
 import { seedBatch, addMessage } from "../helpers/seed.js";
 import { runSweep } from "../../src/worker/sweep.js";
-import { buildReplySearches, classifyReply, parseHeaders, createCheckerFromClient } from "../../src/imap.js";
+import { buildReplySearches, classifyReply, parseHeaders, createCheckerFromClient, withTimeout } from "../../src/imap.js";
 import { followupSendsAllowed, SWEEP_WINDOW_DAYS, sweepTolerance, sweepOk, isFatalSweepError } from "../../src/worker/sweep.js";
 import { stopWorkers } from "../../src/worker/poller.js";
 
@@ -269,55 +269,140 @@ test("follow-up sends are held when the last successful sweep is older than 1 ho
   assert.equal(await followupSendsAllowed(pool, { ...cfg, replySweepEnabled: false }, now), true, "sweep disabled");
 });
 
-// --- C1: imapflow never throws from search()/fetchOne(); it returns false/undefined ----------------
-const fakeClient = (o = {}) => ({
-  usable: true,
-  mailbox: { path: "INBOX" },
-  search: async () => [],
-  fetchOne: async () => undefined,
-  ...o,
+// --- C1: imapflow never throws from search(); it returns false/undefined -----------------------
+// Fake imapflow-like client: one SEARCH for the snapshot, one async-iterator FETCH per uid chunk.
+function fakeClient(o = {}) {
+  const calls = { search: [], fetch: [] };
+  const msgs = o.msgs ?? [];
+  const c = {
+    usable: true,
+    mailbox: { path: "INBOX" },
+    calls,
+    async search(q, opts) { calls.search.push({ q, opts }); return msgs.map((m) => m.uid); },
+    async *fetch(range, query, opts) {
+      calls.fetch.push({ range, query, opts });
+      const want = new Set(String(range).split(",").map(Number));
+      for (const m of msgs) if (want.has(m.uid)) yield m;
+    },
+    close() { c.closed = true; c.usable = false; },
+    ...o,
+  };
+  delete c.msgs;
+  return c;
+}
+const OPTS = { fromEmail: "ann@example.com", subject: "S", since: new Date("2026-10-01T00:00:00Z") };
+const CFG = { gmailUser: "me@gmail.com" };
+const mail = (uid, o = {}) => ({
+  uid,
+  envelope: { from: [{ address: o.from ?? "ann@example.com" }], subject: o.subject ?? "Re: S", date: o.date ?? new Date("2026-10-02T00:00:00Z") },
+  headers: Buffer.from(Object.entries(o.headers ?? {}).map(([k, v]) => `${k}: ${v}\r\n`).join("") + "\r\n"),
 });
-const OPTS = { fromEmail: "ann@example.com", subject: "S", since: new Date() };
-const goodMsg = { envelope: { from: [{ address: "ann@example.com" }], subject: "Re: S" }, headers: Buffer.from("") };
 
-test("IMAP checker: an empty array is a real 'no reply'; a match returns uid and via", async () => {
-  assert.equal(await createCheckerFromClient(fakeClient(), { gmailUser: "me@gmail.com" }).check("<a@b>", OPTS), false);
-  const hit = createCheckerFromClient(fakeClient({ search: async () => [7], fetchOne: async () => goodMsg }), { gmailUser: "me@gmail.com" });
-  assert.deepEqual(await hit.check("<a@b>", OPTS), { matched: true, via: "in-reply-to", uid: 7 });
+test("IMAP checker: many candidates cost ONE search and ONE fetch pass; an empty inbox is a real 'no reply'", async () => {
+  const c = fakeClient({ msgs: [mail(1, { from: "x@y.z", subject: "unrelated" }), mail(2, { from: "other@y.z", headers: { "in-reply-to": "<zzz@q>" } })] });
+  const ck = createCheckerFromClient(c, CFG);
+  for (let i = 0; i < 50; i++) assert.equal(await ck.check(`<m${i}@b>`, { ...OPTS, fromEmail: `p${i}@example.com` }), false);
+  assert.equal(c.calls.search.length, 1);
+  assert.equal(c.calls.fetch.length, 1);
+  assert.ok(c.calls.search[0].q.since instanceof Date);
+  assert.equal(c.calls.search[0].opts.uid, true);
+  assert.deepEqual(c.calls.fetch[0].query.headers, ["in-reply-to", "references", "auto-submitted", "x-autoreply", "x-autorespond", "precedence"]);
+  assert.equal(c.calls.fetch[0].query.envelope, true);
+  assert.equal(c.calls.fetch[0].opts.uid, true);
+  const none = fakeClient();
+  assert.equal(await createCheckerFromClient(none, CFG).check("<a@b>", OPTS), false);
+  assert.equal(none.calls.fetch.length, 0, "nothing to fetch");
+});
+
+test("IMAP checker: large inboxes are fetched in chunks, still one search", async () => {
+  const c = fakeClient({ msgs: [1, 2, 3, 4, 5].map((u) => mail(u, { from: "x@y.z", subject: "n" })) });
+  const ck = createCheckerFromClient(c, CFG, { chunkSize: 2 });
+  await ck.check("<a@b>", OPTS);
+  await ck.check("<c@d>", OPTS);
+  assert.equal(c.calls.search.length, 1);
+  assert.deepEqual(c.calls.fetch.map((f) => f.range), ["1,2", "3,4", "5"]);
+});
+
+test("IMAP checker: matches by In-Reply-To, by References (multi-id list), and by from+subject+date", async () => {
+  const c = fakeClient({
+    msgs: [
+      mail(10, { headers: { "In-Reply-To": "<A@B>" } }),
+      mail(11, { headers: { References: "<one@x> <two@x>\r\n <three@b>" } }),
+      mail(12, { from: "Jo@Example.com", subject: "RE: role at acme" }),
+      mail(13, { from: "jo@example.com", subject: "Re: role at acme", date: new Date("2026-09-01T00:00:00Z") }),
+    ],
+  });
+  const ck = createCheckerFromClient(c, CFG);
+  assert.deepEqual(await ck.check("<a@b>", OPTS), { matched: true, via: "in-reply-to", uid: 10 });
+  assert.deepEqual(await ck.check("<three@b>", OPTS), { matched: true, via: "references", uid: 11 });
+  assert.deepEqual(await ck.check("<nomatch@b>", { fromEmail: "jo@example.com", subject: "Role at Acme", since: new Date("2026-10-01T00:00:00Z") }), { matched: true, via: "from-subject", uid: 12 });
+  assert.equal(await ck.check("<nomatch@b>", { fromEmail: "jo@example.com", subject: "Role at Acme", since: new Date("2026-10-05T00:00:00Z") }), false, "older than since");
+  assert.equal(await ck.check("<nomatch@b>", { fromEmail: "jo@example.com", subject: "x\r\ny", since: OPTS.since }), false);
+  assert.equal(await ck.check("", OPTS), false);
+});
+
+test("IMAP checker: auto-replies, bounces, own-address and loose-sender hits are rejected", async () => {
+  const c = fakeClient({
+    msgs: [
+      mail(1, { headers: { "In-Reply-To": "<a@b>", "Auto-Submitted": "auto-replied" } }),
+      mail(2, { from: "mailer-daemon@googlemail.com", headers: { References: "<a@b>" } }),
+      mail(3, { from: "me@gmail.com", headers: { "In-Reply-To": "<a@b>" } }),
+      mail(4, { from: "someone-else@example.com", subject: "Re: S" }),
+    ],
+  });
+  const ck = createCheckerFromClient(c, CFG);
+  assert.equal(await ck.check("<a@b>", OPTS), false);
 });
 
 test("IMAP checker: search() returning false/undefined is an error, never 'no reply'", async () => {
-  for (const bad of [false, undefined, null]) {
-    const ck = createCheckerFromClient(fakeClient({ search: async () => bad }), { gmailUser: "me@gmail.com" });
+  for (const bad of [false, undefined, null, "x"]) {
+    const ck = createCheckerFromClient(fakeClient({ search: async () => bad }), CFG);
     await assert.rejects(ck.check("<a@b>", OPTS), (e) => e.code === "ESEARCH" && !isFatalSweepError(e), String(bad));
   }
 });
 
 test("IMAP checker: a closed connection / unselected mailbox is a FATAL error", async () => {
   for (const c of [fakeClient({ usable: false }), fakeClient({ mailbox: false }), fakeClient({ mailbox: undefined })]) {
-    const ck = createCheckerFromClient(c, { gmailUser: "me@gmail.com" });
-    await assert.rejects(ck.check("<a@b>", OPTS), (e) => isFatalSweepError(e));
+    await assert.rejects(createCheckerFromClient(c, CFG).check("<a@b>", OPTS), (e) => e.code === "NoConnection" && isFatalSweepError(e));
   }
   // The connection dies during the search: it returns false and the mailbox is gone afterwards.
   const c = fakeClient();
   c.search = async () => { c.mailbox = false; return false; };
-  await assert.rejects(createCheckerFromClient(c, { gmailUser: "me@gmail.com" }).check("<a@b>", OPTS), (e) => isFatalSweepError(e));
+  await assert.rejects(createCheckerFromClient(c, CFG).check("<a@b>", OPTS), (e) => isFatalSweepError(e));
+  // ... or during the fetch iteration, which just ends quietly.
+  const d = fakeClient({ msgs: [mail(1)] });
+  d.fetch = async function* () { d.usable = false; };
+  await assert.rejects(createCheckerFromClient(d, CFG).check("<a@b>", OPTS), (e) => isFatalSweepError(e));
 });
 
-test("IMAP checker: a falsy fetchOne() result is an error, not a non-match", async () => {
-  for (const bad of [undefined, false, null]) {
-    const ck = createCheckerFromClient(fakeClient({ search: async () => [9], fetchOne: async () => bad }), { gmailUser: "me@gmail.com" });
-    await assert.rejects(ck.check("<a@b>", OPTS), (e) => e.code === "EFETCH" && !isFatalSweepError(e), String(bad));
-  }
-  const gone = fakeClient({ search: async () => [9] });
-  gone.fetchOne = async () => { gone.usable = false; return undefined; };
-  await assert.rejects(createCheckerFromClient(gone, { gmailUser: "me@gmail.com" }).check("<a@b>", OPTS), (e) => isFatalSweepError(e));
+test("IMAP checker: a failed snapshot fails every row the same way without re-reading the inbox", async () => {
+  const c = fakeClient({ search: async () => false });
+  let n = 0;
+  const orig = c.search;
+  c.search = async (...a) => (n++, orig(...a));
+  const ck = createCheckerFromClient(c, CFG);
+  for (let i = 0; i < 3; i++) await assert.rejects(ck.check("<a@b>", OPTS), (e) => e.code === "ESEARCH");
+  assert.equal(n, 1);
+});
+
+test("IMAP timeout: a never-settling call rejects ETIMEDOUT (fatal), closes the client and leaves no timer", async () => {
+  const c = fakeClient({ search: () => new Promise(() => {}) });
+  const ck = createCheckerFromClient(c, CFG, { timeoutMs: 20 });
+  await assert.rejects(ck.check("<a@b>", OPTS), (e) => e.code === "ETIMEDOUT" && e.fatal === true && isFatalSweepError(e));
+  assert.equal(c.closed, true);
+  const f = fakeClient({ msgs: [mail(1)] });
+  f.fetch = async function* () { await new Promise(() => {}); };
+  await assert.rejects(createCheckerFromClient(f, CFG, { snapshotTimeoutMs: 20 }).check("<a@b>", OPTS), (e) => e.code === "ETIMEDOUT" && e.fatal === true);
+  assert.equal(f.closed, true);
+  // a call that finishes in time is untouched and its timer is cleared
+  assert.equal(await withTimeout(c, async () => "ok", 5_000), "ok");
+  await assert.rejects(withTimeout(c, async () => { throw new Error("boom"); }, 5_000), /boom/);
 });
 
 test("sweep with a checker whose search returns false does not mark ok and never releases the follow-up hold", async () => {
   await pool.query("delete from settings where key='sweep_state'");
   const { c } = await sentContact();
-  const openChecker = async () => createCheckerFromClient(fakeClient({ search: async () => false }), { gmailUser: "me@gmail.com" });
+  const openChecker = async () => createCheckerFromClient(fakeClient({ search: async () => false }), CFG);
   const out = await runSweep({ pool, config: { dryRun: false, replySweepEnabled: true }, openChecker, logger: quiet() });
   assert.ok(out.rowErrors >= 1 || out.error);
   assert.equal((await contactRow(c.id)).status, "sent");
