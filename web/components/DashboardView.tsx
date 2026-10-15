@@ -8,6 +8,7 @@ import { eventLabel, formatDateTime, formatShort, percent, plural, statusLabel }
 import type { ContactStatus, Dashboard, SweepResult } from "@/lib/types";
 import { useMode } from "./AppShell";
 import { Notice } from "./Notice";
+import { OverdueBanner } from "./OverdueBanner";
 import { PageHeader } from "./PageHeader";
 import { Postmark } from "./Postmark";
 import { SendHoldBanner } from "./SendHoldBanner";
@@ -187,6 +188,7 @@ export function DashboardView() {
       />
 
       {data.sendHold && <SendHoldBanner hold={data.sendHold} />}
+      <OverdueBanner onRescheduled={load} />
 
       <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4" aria-label="Today">
         <Stat label="Sent in the last 24 h">

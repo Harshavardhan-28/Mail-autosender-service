@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, Trash2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { plural } from "@/lib/format";
 import type { Resume, SendWindowInfo, UploadResult } from "@/lib/types";
 import { BatchScheduler } from "./BatchScheduler";
+import { DeleteDialog } from "./DeleteDialog";
 import { Notice } from "./Notice";
 import { PageHeader } from "./PageHeader";
 import { Button } from "@/components/ui/button";
@@ -18,6 +20,8 @@ export function BatchView({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
   const [resumes, setResumes] = useState<Resume[]>([]);
   const [sendWindow, setSendWindow] = useState<SendWindowInfo | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const router = useRouter();
 
   useEffect(() => {
     let live = true;
@@ -71,7 +75,25 @@ export function BatchView({ id }: { id: string }) {
         eyebrow="Schedule batch"
         title={batch.batch.name}
         description={`${plural(batch.contacts.length, "contact")} · ${waiting === 0 ? "nothing left to schedule" : `${waiting} waiting to be scheduled`}`}
-        actions={back}
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={() => setDeleting(true)}>
+              <Trash2 />
+              Delete batch
+            </Button>
+            {back}
+          </>
+        }
+      />
+      <DeleteDialog
+        open={deleting}
+        onClose={() => setDeleting(false)}
+        title={`Delete batch “${batch.batch.name}”?`}
+        description={`Its ${plural(batch.contacts.length, "contact")} will be removed and their scheduled emails cancelled.`}
+        confirmLabel="Delete batch"
+        successMessage={() => `Deleted batch “${batch.batch.name}”`}
+        perform={(force) => api.deleteBatch(id, force)}
+        onDeleted={() => router.push("/contacts")}
       />
       <BatchScheduler upload={batch} resumes={resumes} sendWindow={sendWindow} reopened />
     </div>

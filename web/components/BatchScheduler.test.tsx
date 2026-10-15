@@ -193,4 +193,22 @@ describe("BatchScheduler", () => {
     render(<BatchScheduler upload={upload()} sendWindow={{ enforced: false, window: { start: "09:00", end: "10:00", tz: "Asia/Kolkata" } }} />);
     expect(screen.queryByText(/next daily window/i)).toBeNull();
   });
+
+  it("previews the window-bunched stagger like the server and keeps the old hint without a window", () => {
+    stubFetch(() => json({}));
+    const many = Array.from({ length: 24 }, (_, i) => contact(`c-${i + 1}`, `p${i}@x.com`));
+    // 09:00 IST two days out, whatever the machine's zone, so the whole window is available.
+    const t = new Date(Date.now() + 2 * 86_400_000);
+    const nineIst = toLocalInputValue(new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate(), 3, 30)));
+    const win = { enforced: false, window: { start: "09:00", end: "10:00", tz: "Asia/Kolkata" } };
+    const { unmount } = render(<BatchScheduler upload={upload({ contacts: many })} sendWindow={win} />);
+    fireEvent.change(sendAtInput(), { target: { value: nineIst } });
+    fireEvent.change(screen.getByLabelText(/stagger/i), { target: { value: "5" } });
+    expect(screen.getByText("24 emails in 12 slots, 2 per slot, 09:00-09:55 Asia/Kolkata")).toBeInTheDocument();
+    unmount();
+    render(<BatchScheduler upload={upload({ contacts: many })} />);
+    fireEvent.change(sendAtInput(), { target: { value: nineIst } });
+    fireEvent.change(screen.getByLabelText(/stagger/i), { target: { value: "5" } });
+    expect(screen.getByText("Gap between emails, in table order")).toBeInTheDocument();
+  });
 });

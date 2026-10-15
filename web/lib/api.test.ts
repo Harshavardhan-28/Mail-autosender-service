@@ -206,3 +206,57 @@ describe("resume library calls", () => {
     expect(JSON.parse(String(by("POST", "/api/batches/b1/schedule")!.body))).toMatchObject({ resumeId: "r1" });
   });
 });
+
+describe("delete and overdue calls", () => {
+  it("uses the delete endpoints and only sends force when asked", async () => {
+    const f = fakeFetch(() => json({ deleted: 1 }));
+    const api = createApi({ fetch: f.fn, onUnauthorized: vi.fn() });
+    expect(await api.deleteContact("c/1")).toEqual({ deleted: 1 });
+    await api.deleteContact("c1", true);
+    await api.deleteContacts(["a", "b"]);
+    await api.deleteContacts(["a"], true);
+    await api.deleteBatch("b1");
+    await api.deleteBatch("b1", true);
+    const sent = f.calls.filter((c) => c.method !== "GET").map((c) => `${c.method} ${c.url} ${c.body ?? ""}`.trim());
+    expect(sent).toEqual([
+      "DELETE /api/contacts/c%2F1",
+      "DELETE /api/contacts/c1?force=true",
+      'POST /api/contacts/delete {"ids":["a","b"]}',
+      'POST /api/contacts/delete {"ids":["a"],"force":true}',
+      "DELETE /api/batches/b1",
+      "DELETE /api/batches/b1?force=true",
+    ]);
+  });
+
+  it("flags a needs_force refusal with its protected count", async () => {
+    const f = fakeFetch(() => json({ error: "2 contacts were already emailed", code: "needs_force", protectedCount: 2 }, 409));
+    const api = createApi({ fetch: f.fn, onUnauthorized: vi.fn() });
+    const err = await api.deleteContacts(["a", "b"]).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.needsForce).toBe(true);
+    expect(err.protectedCount).toBe(2);
+    const other = await createApi({ fetch: fakeFetch(() => json({ error: "x" }, 409)).fn, onUnauthorized: vi.fn() }).deleteBatch("b").catch((e) => e);
+    expect(other.needsForce).toBe(false);
+  });
+
+  it("reads the overdue list and reschedules it", async () => {
+    const f = fakeFetch((c) => (c.method === "GET" ? json({ count: 2, overdueMinutes: 60, messages: [] }) : json({ rescheduled: 2, messages: [], plan: { start: "s", slots: 1, perSlot: 2, staggerMinutes: 5, window: {} } })));
+    const api = createApi({ fetch: f.fn, onUnauthorized: vi.fn() });
+    expect((await api.getOverdue()).count).toBe(2);
+    const r = await api.rescheduleOverdue({ staggerMinutes: 5 });
+    expect(r.rescheduled).toBe(2);
+    expect(f.calls.find((c) => c.method === "GET")!.url).toBe("/api/messages/overdue");
+    const post = f.calls.find((c) => c.method === "POST")!;
+    expect(post.url).toBe("/api/messages/reschedule-overdue");
+    expect(JSON.parse(String(post.body))).toEqual({ staggerMinutes: 5 });
+  });
+
+  it("scheduleBatchWithPlan returns the server plan while scheduleBatch still returns messages", async () => {
+    const plan = { start: "2030-01-01T03:30:00.000Z", slots: 12, perSlot: 2, staggerMinutes: 5, window: { start: "09:00", end: "10:00", tz: "Asia/Kolkata" } };
+    const f = fakeFetch(() => json({ messages: [{ id: "m1" }], plan }, 201));
+    const api = createApi({ fetch: f.fn, onUnauthorized: vi.fn() });
+    const body = { contactIds: ["c1"], sendAt: "2030-01-01T09:00:00.000Z", staggerMinutes: 5 };
+    expect((await api.scheduleBatchWithPlan("b1", body)).plan).toEqual(plan);
+    expect(await api.scheduleBatch("b1", body)).toEqual([{ id: "m1" }]);
+  });
+});

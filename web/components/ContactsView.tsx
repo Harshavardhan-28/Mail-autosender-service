@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { CalendarClock, ChevronLeft, ChevronRight, Loader2, MoreHorizontal, Paperclip, Search, TriangleAlert, Users } from "lucide-react";
+import { CalendarClock, ChevronLeft, ChevronRight, Loader2, MoreHorizontal, Paperclip, Search, Trash2, TriangleAlert, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { api, ApiError } from "@/lib/api";
 import { checkSendTime, toLocalInputValue, MAX_DAYS_AHEAD } from "@/lib/schedule";
@@ -10,8 +10,10 @@ import { formatDateTime, plural, statusLabel } from "@/lib/format";
 import { refusalText } from "@/lib/refusals";
 import { CONTACT_STATUSES, type BatchSummary, type ContactListItem, type ContactStatus, type ContactsPage, type MessageRef, type ResolveAction, type Resume } from "@/lib/types";
 import { useMode } from "./AppShell";
+import { DeleteDialog, deleteContactsCopy } from "./DeleteDialog";
 import { FollowupToggle } from "./FollowupToggle";
 import { Notice } from "./Notice";
+import { OverdueBanner } from "./OverdueBanner";
 import { PageHeader } from "./PageHeader";
 import { Postmark } from "./Postmark";
 import { StatusBadge } from "./StatusBadge";
@@ -52,6 +54,7 @@ function RowActions({ contact, onDone }: { contact: ContactListItem; onDone: () 
   const [resolving, setResolving] = useState<ResolveAction | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   // Hide a cancelled send at once, before the list reload replaces this row's data.
   const [cancelled, setCancelled] = useState<string[]>([]);
 
@@ -118,6 +121,9 @@ function RowActions({ contact, onDone }: { contact: ContactListItem; onDone: () 
           Resolve
         </Button>
       ))}
+      <Button variant="ghost" size="icon-sm" aria-label={`Delete ${contact.email}`} onClick={() => setDeleting(true)}>
+        <Trash2 />
+      </Button>
       {hasMenu && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -153,6 +159,8 @@ function RowActions({ contact, onDone }: { contact: ContactListItem; onDone: () 
           </DropdownMenuContent>
         </DropdownMenu>
       )}
+
+      <DeleteDialog open={deleting} onClose={() => setDeleting(false)} {...deleteContactsCopy(1)} perform={(force) => api.deleteContact(contact.id, force)} onDeleted={onDone} />
 
       <Dialog open={editing} onOpenChange={(o) => !o && setEditing(false)}>
         <DialogContent className="sm:max-w-sm">
@@ -330,6 +338,7 @@ export function ContactsView({ initialBatchId, initialStatus }: { initialBatchId
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
   const [resumes, setResumes] = useState<Resume[]>([]);
+  const [deletingBatch, setDeletingBatch] = useState(false);
   const reload = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
@@ -375,16 +384,45 @@ export function ContactsView({ initialBatchId, initialStatus }: { initialBatchId
           </>
         }
         actions={
-          currentBatch && (currentBatch.statusCounts.uploaded ?? 0) > 0 ? (
-            <Button size="sm" asChild>
-              <Link href={`/batches/${encodeURIComponent(currentBatch.id)}`}>
-                <CalendarClock />
-                Schedule this batch
-              </Link>
-            </Button>
-          ) : undefined
+          currentBatch && (
+            <>
+              {(currentBatch.statusCounts.uploaded ?? 0) > 0 && (
+                <Button size="sm" asChild>
+                  <Link href={`/batches/${encodeURIComponent(currentBatch.id)}`}>
+                    <CalendarClock />
+                    Schedule this batch
+                  </Link>
+                </Button>
+              )}
+              <Button size="sm" variant="outline" onClick={() => setDeletingBatch(true)}>
+                <Trash2 />
+                Delete batch
+              </Button>
+            </>
+          )
         }
       />
+
+      {currentBatch && (
+        <DeleteDialog
+          open={deletingBatch}
+          onClose={() => setDeletingBatch(false)}
+          title={`Delete batch “${currentBatch.name}”?`}
+          description={`Its ${plural(currentBatch.contactCount, "contact")} will be removed and their scheduled emails cancelled.`}
+          confirmLabel="Delete batch"
+          successMessage={() => `Deleted batch “${currentBatch.name}”`}
+          perform={(force) => api.deleteBatch(currentBatch.id, force)}
+          onDeleted={() => {
+            // Back to the unfiltered list (this view keeps the filter in state, so mirror it in the URL).
+            setBatchId("");
+            setPage(1);
+            window.history.replaceState(null, "", "/contacts");
+            reload();
+          }}
+        />
+      )}
+
+      <OverdueBanner className="mb-4" onRescheduled={reload} />
 
       <form
         className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-[14rem_11rem_minmax(0,1fr)]"

@@ -113,6 +113,31 @@ export interface Message {
   createdAt: string;
 }
 
+/** How the server packed staggered sends into the send window. */
+export interface ReschedulePlan {
+  start: string;
+  slots: number;
+  perSlot: number;
+  staggerMinutes: number;
+  window: SendWindow;
+}
+
+export interface OverdueMessage {
+  id: string;
+  contactId: string;
+  email: string;
+  person: string;
+  kind: MessageKind;
+  scheduledFor: string;
+  batchName: string | null;
+}
+
+export interface OverdueList {
+  count: number;
+  overdueMinutes: number;
+  messages: OverdueMessage[];
+}
+
 export interface RowIssue {
   row: number;
   message: string;

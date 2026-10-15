@@ -8,6 +8,7 @@ import { buildPreviewRows, initialSelection, selectionState, setAll, toggle } fr
 import { formatDateTime, localTimeZone, plural } from "@/lib/format";
 import type { ContactStatus, Refusal, Resume, SendWindowInfo, UploadResult } from "@/lib/types";
 import { sendWindowLabel } from "@/lib/sendWindow";
+import { describeWindowPlan } from "@/lib/sendWindowPlan";
 import { FollowupToggle } from "./FollowupToggle";
 import { Postmark } from "./Postmark";
 import { RefusalList } from "./RefusalList";
@@ -66,11 +67,14 @@ export function BatchScheduler({ upload, resumes = [], sendWindow = null, now = 
   const attachmentName = (c: { attachment?: { displayName: string; source: string } | null }) =>
     c.attachment?.source === "contact" ? c.attachment.displayName : (resumeName ?? c.attachment?.displayName);
 
-  const plan = planSchedule({ selectedIds: selected, sendAt, staggerMinutes: stagger, overrides, now: now() });
+  // The server bunches staggered sends inside the saved window whether or not it enforces it, so preview the same.
+  const win = sendWindow?.window?.start && sendWindow.window.end && sendWindow.window.tz ? sendWindow.window : null;
+  const plan = planSchedule({ selectedIds: selected, sendAt, staggerMinutes: stagger, overrides, now: now(), window: win });
   const errs = plan.ok ? null : plan.errors;
   // The bulk time is checked as soon as it is typed, even before any row is selected.
   const sendAtError = sendAt ? (checkSendTime(sendAt, now()).error ?? errs?.sendAt) : undefined;
   const times = plan.ok ? plan.plan.times : {};
+  const windowPlan = plan.ok ? plan.plan.windowPlan : undefined;
   const selState = selectionState(rows, selected);
   const minLocal = toLocalInputValue(new Date(now().getTime() + 60_000));
   const maxLocal = toLocalInputValue(new Date(now().getTime() + MAX_DAYS_AHEAD * 86_400_000));
@@ -400,7 +404,7 @@ export function BatchScheduler({ upload, resumes = [], sendWindow = null, now = 
                 aria-describedby="stagger-hint"
               />
               <p className="text-xs text-muted-foreground" id="stagger-hint">
-                {errs?.stagger ? <span className="text-destructive">{errs.stagger}</span> : "Gap between emails, in table order"}
+                {errs?.stagger ? <span className="text-destructive">{errs.stagger}</span> : windowPlan ? describeWindowPlan(windowPlan.plan, windowPlan.count, windowPlan.window) : "Gap between emails, in table order"}
               </p>
             </div>
           </div>
@@ -414,7 +418,7 @@ export function BatchScheduler({ upload, resumes = [], sendWindow = null, now = 
               {n === 0
                 ? "Select at least one contact"
                 : plan.ok && plan.plan.bulk
-                  ? `${plural(n, "email")} · first ${formatDateTime(plan.plan.bulk.sendAt)}`
+                  ? `${plural(n, "email")} · first ${formatDateTime(windowPlan?.plan.start ?? plan.plan.bulk.sendAt)}`
                   : plural(n, "email") + " selected"}
             </p>
             <Button disabled={!canConfirm} onClick={onConfirm}>
