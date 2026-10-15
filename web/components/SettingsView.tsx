@@ -1,12 +1,13 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 import { api, ApiError } from "@/lib/api";
 import { fillTemplate, PLACEHOLDERS, validateTemplate } from "@/lib/template";
 import type { Dashboard, FollowupTemplate } from "@/lib/types";
 import { SendWindowForm } from "./SendWindowForm";
-import { Loader2 } from "lucide-react";
+import { Clock, Loader2, Palette, Send, Shield, Type, type LucideIcon } from "lucide-react";
+import { useTheme } from "./ThemeProvider";
+import type { ThemePref } from "@/lib/theme";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { EmailLetter } from "./EmailLetter";
@@ -221,46 +222,87 @@ function SendStatus() {
   );
 }
 
-function Section({ id, title, description, children }: { id: string; title: string; description: string; children: React.ReactNode }) {
+const TABS: { key: string; label: string; icon: LucideIcon; title: string; description: string }[] = [
+  { key: "sending", label: "Sending", icon: Send, title: "Sending", description: "The server's current mode and limits." },
+  { key: "window", label: "Send window", icon: Clock, title: "Send window", description: "The daily hours in which real emails go out." },
+  { key: "template", label: "Follow-up template", icon: Type, title: "Follow-up template", description: "Used for follow-ups when a contact has no text of its own." },
+  { key: "appearance", label: "Appearance", icon: Palette, title: "Appearance", description: "Choose how Outbox looks on this device." },
+  { key: "account", label: "Account", icon: Shield, title: "Account", description: "Change your password. Other signed-in sessions are signed out." },
+];
+
+const THEMES: { value: ThemePref; label: string; bg: string; side: string; line: string }[] = [
+  { value: "light", label: "Light", bg: "#f6f6f9", side: "#111228", line: "#e1e2e8" },
+  { value: "dark", label: "Dark", bg: "#0b0b0d", side: "#0f1012", line: "#25262b" },
+  { value: "system", label: "Match system", bg: "linear-gradient(90deg,#f6f6f9 50%,#0b0b0d 50%)", side: "#111228", line: "#a0a3ae" },
+];
+
+function Appearance() {
+  const { pref, setPref } = useTheme();
   return (
-    <section aria-labelledby={id} className="grid gap-4 py-8 first:pt-0 lg:grid-cols-[13rem_minmax(0,1fr)] lg:gap-10">
-      <div className="space-y-1">
-        <h2 id={id} className="text-sm font-medium">
-          {title}
-        </h2>
-        <p className="text-[13px] text-muted-foreground">{description}</p>
-      </div>
-      <div className="min-w-0 rounded-lg border bg-card p-4 sm:p-5">{children}</div>
-    </section>
+    <div role="radiogroup" aria-label="Theme" className="grid gap-3 sm:grid-cols-3">
+      {THEMES.map((t) => (
+        <button
+          key={t.value}
+          type="button"
+          role="radio"
+          aria-checked={pref === t.value}
+          onClick={() => setPref(t.value)}
+          className={cn("rounded-xl border-2 p-2.5 text-left transition-colors", pref === t.value ? "border-primary" : "border-border hover:border-input")}
+        >
+          <span className="flex h-20 overflow-hidden rounded-lg" style={{ background: t.bg }}>
+            <span className="w-1/4" style={{ background: t.side }} />
+            <span className="flex flex-1 flex-col gap-1.5 p-2.5">
+              <span className="h-2 w-3/5 rounded-sm" style={{ background: t.line }} />
+              <span className="h-2 w-2/5 rounded-sm" style={{ background: t.line }} />
+            </span>
+          </span>
+          <span className="mt-2 block text-[13px] font-medium">{t.label}</span>
+        </button>
+      ))}
+    </div>
   );
 }
 
 export function SettingsView() {
+  const [tab, setTab] = useState("sending");
+  const current = TABS.find((t) => t.key === tab) ?? TABS[0]!;
   return (
-    <div className="mx-auto max-w-4xl">
-      <PageHeader eyebrow="Account / Settings" title="Settings" description="Your account, the resume library, and how follow-ups read." />
-      <div className="divide-y">
-        <Section id="h-status" title="Sending" description="The server's current mode and limits.">
-          <SendStatus />
-        </Section>
-        <Section id="h-window" title="Send window" description="The daily hours in which real emails go out.">
-          <SendWindowForm />
-        </Section>
-        <Section id="h-resumes" title="Resumes" description="PDFs you can attach. The default goes with every email unless you pick another.">
-          <p className="text-[13px]">
-            Resumes now live in their own{" "}
-            <Link href="/resumes" className="font-medium text-accent-text underline underline-offset-2">
-              resume library
-            </Link>
-            .
-          </p>
-        </Section>
-        <Section id="h-template" title="Follow-up template" description="Used for follow-ups when a contact has no text of its own.">
-          <TemplateForm />
-        </Section>
-        <Section id="h-password" title="Account" description="Change your password. Other signed-in sessions are signed out.">
-          <PasswordForm />
-        </Section>
+    <div className="mx-auto max-w-5xl">
+      <PageHeader eyebrow="Account / Settings" title="Settings" />
+      <div className="grid items-start gap-6 md:grid-cols-[13rem_minmax(0,1fr)] md:gap-7">
+        <nav aria-label="Settings sections" className="flex gap-0.5 overflow-x-auto md:sticky md:top-20 md:flex-col">
+          {TABS.map(({ key, label, icon: Icon }) => {
+            const on = key === tab;
+            return (
+              <button
+                key={key}
+                type="button"
+                aria-current={on ? "page" : undefined}
+                onClick={() => setTab(key)}
+                className={cn(
+                  "flex h-9 shrink-0 items-center gap-2.5 rounded-lg px-3 text-[13.5px] font-medium whitespace-nowrap transition-colors",
+                  on ? "bg-card text-foreground shadow-xs ring-1 ring-border" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Icon aria-hidden="true" className={cn("size-[15px]", on && "text-primary")} />
+                {label}
+              </button>
+            );
+          })}
+        </nav>
+        <section aria-labelledby="settings-title" className="min-w-0 space-y-4 rounded-xl border bg-card p-5 sm:p-6">
+          <div>
+            <h2 id="settings-title" className="text-base font-semibold">
+              {current.title}
+            </h2>
+            <p className="mt-0.5 text-[12.5px] text-muted-foreground">{current.description}</p>
+          </div>
+          {tab === "sending" && <SendStatus />}
+          {tab === "window" && <SendWindowForm />}
+          {tab === "template" && <TemplateForm />}
+          {tab === "appearance" && <Appearance />}
+          {tab === "account" && <PasswordForm />}
+        </section>
       </div>
     </div>
   );
