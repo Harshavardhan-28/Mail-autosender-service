@@ -190,6 +190,7 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
   return (
     <div>
       <PageHeader
+        eyebrow="Workspace / Mail"
         title="Mail"
         description={
           <>

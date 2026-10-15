@@ -264,6 +264,7 @@ export function ContactsView({ initialBatchId, initialStatus, initialQ }: { init
   return (
     <div>
       <PageHeader
+        eyebrow="Workspace / Contacts"
         title="Contacts"
         description={
           <>

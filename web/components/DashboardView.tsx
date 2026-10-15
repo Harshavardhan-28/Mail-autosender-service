@@ -106,7 +106,7 @@ function sweepSummary(r: SweepResult): string {
 function DashboardSkeleton() {
   return (
     <div aria-busy="true" aria-label="Loading the dashboard">
-      <PageHeader title="Dashboard" description="Loading…" />
+      <PageHeader eyebrow="Workspace / Dashboard" title="Dashboard" description="Loading…" />
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {[0, 1, 2, 3].map((i) => (
           <Skeleton key={i} className="h-28 rounded-lg" />
@@ -159,7 +159,7 @@ export function DashboardView() {
   if (error && !data) {
     return (
       <div>
-        <PageHeader title="Dashboard" />
+        <PageHeader eyebrow="Workspace / Dashboard" title="Dashboard" />
         <Notice tone="danger" role="alert">
           {error}
         </Notice>

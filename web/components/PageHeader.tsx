@@ -16,8 +16,8 @@ export function PageHeader({
   return (
     <header className={cn("mb-6 flex flex-wrap items-end justify-between gap-x-4 gap-y-3", className)}>
       <div className="min-w-0 space-y-1">
-        {eyebrow && <p className="text-xs font-medium text-accent-text">{eyebrow}</p>}
-        <h1 className="truncate text-xl font-semibold tracking-tight">{title}</h1>
+        {eyebrow && <p className="text-xs text-muted-foreground">{eyebrow}</p>}
+        <h1 className="truncate text-[22px] leading-7 font-semibold tracking-[-0.02em]">{title}</h1>
         {description && <p className="max-w-prose text-[13px] text-muted-foreground">{description}</p>}
       </div>
       {actions && <div className="flex items-center gap-2">{actions}</div>}

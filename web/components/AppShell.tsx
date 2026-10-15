@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FlaskConical, LayoutDashboard, LogOut, Mail, Menu, PanelLeftClose, PanelLeftOpen, Settings, Upload, Users, type LucideIcon } from "lucide-react";
+import { ChartColumn, FileText, FlaskConical, Layers, LayoutDashboard, LogOut, Mail, Menu, PanelLeftClose, PanelLeftOpen, Settings, Upload, Users, type LucideIcon } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { BrandMark } from "./BrandMark";
@@ -21,13 +21,28 @@ type ModeContext = { mode: Mode; refreshMode: () => void; setMode: (m: Mode) => 
 const Ctx = createContext<ModeContext>({ mode: null, refreshMode: () => {}, setMode: () => {} });
 export const useMode = () => useContext(Ctx);
 
-const NAV: { href: string; label: string; icon: LucideIcon }[] = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/mail", label: "Mail", icon: Mail },
-  { href: "/upload", label: "Upload", icon: Upload },
-  { href: "/contacts", label: "Contacts", icon: Users },
-  { href: "/settings", label: "Settings", icon: Settings },
+type NavItem = { href: string; label: string; icon: LucideIcon };
+const NAV_GROUPS: { group: string; items: NavItem[] }[] = [
+  {
+    group: "Workspace",
+    items: [
+      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+      { href: "/mail", label: "Mail", icon: Mail },
+      { href: "/contacts", label: "Contacts", icon: Users },
+      { href: "/batches", label: "Batches", icon: Layers },
+    ],
+  },
+  {
+    group: "Create",
+    items: [
+      { href: "/upload", label: "Upload", icon: Upload },
+      { href: "/resumes", label: "Resumes", icon: FileText },
+    ],
+  },
+  { group: "Insights", items: [{ href: "/analytics", label: "Analytics", icon: ChartColumn }] },
+  { group: "Account", items: [{ href: "/settings", label: "Settings", icon: Settings }] },
 ];
+const NAV = NAV_GROUPS.flatMap((g) => g.items);
 
 const COLLAPSE_KEY = "outbox-sidebar-collapsed";
 
@@ -35,40 +50,45 @@ const isActive = (pathname: string, href: string) => pathname === href || pathna
 
 function NavList({ pathname, collapsed = false, onNavigate }: { pathname: string; collapsed?: boolean; onNavigate?: () => void }) {
   return (
-    <nav aria-label="Main">
-      <ul className="flex flex-col gap-0.5">
-        {NAV.map(({ href, label, icon: Icon }) => {
-          const active = isActive(pathname, href);
-          const link = (
-            <Link
-              href={href}
-              onClick={onNavigate}
-              aria-current={active ? "page" : undefined}
-              aria-label={collapsed ? label : undefined}
-              className={cn(
-                "flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] font-medium text-sidebar-foreground transition-colors hover:bg-accent hover:text-foreground",
-                "aria-[current=page]:bg-accent aria-[current=page]:text-foreground",
-                collapsed && "justify-center px-0",
-              )}
-            >
-              <Icon aria-hidden="true" className={cn("size-4 shrink-0 text-muted-foreground", active && "text-accent-text")} />
-              {!collapsed && label}
-            </Link>
-          );
-          return (
-            <li key={href}>
-              {collapsed ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>{link}</TooltipTrigger>
-                  <TooltipContent side="right">{label}</TooltipContent>
-                </Tooltip>
-              ) : (
-                link
-              )}
-            </li>
-          );
-        })}
-      </ul>
+    <nav aria-label="Main" className="flex flex-col gap-3.5">
+      {NAV_GROUPS.map(({ group, items }) => (
+        <div key={group}>
+          {!collapsed && <p className="px-2.5 pb-1.5 text-[10.5px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">{group}</p>}
+          <ul className="flex flex-col gap-0.5">
+            {items.map(({ href, label, icon: Icon }) => {
+              const active = isActive(pathname, href);
+              const link = (
+                <Link
+                  href={href}
+                  onClick={onNavigate}
+                  aria-current={active ? "page" : undefined}
+                  aria-label={collapsed ? label : undefined}
+                  className={cn(
+                    "flex h-[34px] items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] font-medium text-sidebar-foreground transition-colors hover:bg-accent hover:text-foreground",
+                    "aria-[current=page]:bg-st-indigo-bg aria-[current=page]:text-foreground",
+                    collapsed && "justify-center px-0",
+                  )}
+                >
+                  <Icon aria-hidden="true" className={cn("size-4 shrink-0 text-muted-foreground", active && "text-primary")} />
+                  {!collapsed && label}
+                </Link>
+              );
+              return (
+                <li key={href}>
+                  {collapsed ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>{link}</TooltipTrigger>
+                      <TooltipContent side="right">{label}</TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    link
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
     </nav>
   );
 }
@@ -167,7 +187,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <aside
             className={cn(
               "sticky top-0 hidden h-svh shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-200 md:flex",
-              collapsed ? "w-14" : "w-56",
+              collapsed ? "w-16" : "w-58",
             )}
           >
             <div className={cn("flex h-12 items-center gap-2 px-3", collapsed && "justify-center px-0")}>

@@ -1,10 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 import { api, ApiError } from "@/lib/api";
 import { fillTemplate, PLACEHOLDERS, validateTemplate } from "@/lib/template";
 import type { Dashboard, FollowupTemplate } from "@/lib/types";
-import { ResumesPanel } from "./ResumesPanel";
 import { SendWindowForm } from "./SendWindowForm";
 import { Loader2 } from "lucide-react";
 import { formatDateTime } from "@/lib/format";
@@ -238,7 +238,7 @@ function Section({ id, title, description, children }: { id: string; title: stri
 export function SettingsView() {
   return (
     <div className="mx-auto max-w-4xl">
-      <PageHeader title="Settings" description="Your account, the resume library, and how follow-ups read." />
+      <PageHeader eyebrow="Account / Settings" title="Settings" description="Your account, the resume library, and how follow-ups read." />
       <div className="divide-y">
         <Section id="h-status" title="Sending" description="The server's current mode and limits.">
           <SendStatus />
@@ -247,7 +247,13 @@ export function SettingsView() {
           <SendWindowForm />
         </Section>
         <Section id="h-resumes" title="Resumes" description="PDFs you can attach. The default goes with every email unless you pick another.">
-          <ResumesPanel />
+          <p className="text-[13px]">
+            Resumes now live in their own{" "}
+            <Link href="/resumes" className="font-medium text-accent-text underline underline-offset-2">
+              resume library
+            </Link>
+            .
+          </p>
         </Section>
         <Section id="h-template" title="Follow-up template" description="Used for follow-ups when a contact has no text of its own.">
           <TemplateForm />

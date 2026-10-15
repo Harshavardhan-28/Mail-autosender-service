@@ -187,6 +187,7 @@ export function UploadView() {
   return (
     <div className="mx-auto max-w-2xl">
       <PageHeader
+        eyebrow="Create / Upload"
         title="Upload a CSV"
         description={`Columns: Company, Role, Person, Email, Subject, Mail Text, and optionally Follow-up Text. Up to ${MAX_ROWS} rows, 1 MB.`}
       />
