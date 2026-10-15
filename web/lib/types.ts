@@ -154,6 +154,54 @@ export interface UploadResult {
   warnings: RowWarning[];
 }
 
+/** One CSV row as returned by POST /api/batches/preview and sent back (possibly edited) to /commit. */
+export interface ImportRow {
+  row: number;
+  company: string;
+  role: string;
+  person: string;
+  email: string;
+  subject: string;
+  mailText: string;
+  followupText: string | null;
+}
+
+/** An existing contact that has the same email as a row being imported. */
+export interface ImportConflictMatch {
+  contactId: string;
+  batchId: string;
+  batchName: string;
+  status: ContactStatus;
+  company: string;
+  role: string;
+  person: string;
+  subject: string;
+}
+
+export interface ImportConflict {
+  row: number;
+  email: string;
+  /** False when an existing match was already emailed: it can be skipped or kept, not replaced. */
+  replaceable: boolean;
+  matches: ImportConflictMatch[];
+}
+
+export interface PreviewResult {
+  filename: string;
+  suggestedName: string;
+  rows: ImportRow[];
+  errors: RowIssue[];
+  conflicts: ImportConflict[];
+}
+
+export type Resolution = "skip" | "replace" | "keep";
+
+/** POST /api/batches/commit: the usual upload result plus how the duplicates were handled. */
+export interface CommitResult extends UploadResult {
+  skipped: number;
+  replaced: number;
+}
+
 export type RefusalReason =
   | "replied"
   | "bounced"

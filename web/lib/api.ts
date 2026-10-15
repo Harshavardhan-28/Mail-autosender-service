@@ -5,6 +5,7 @@
 import type {
   BatchSummary,
   CancelResult,
+  CommitResult,
   Contact,
   ContactsPage,
   ContactsQuery,
@@ -14,10 +15,14 @@ import type {
   Dashboard,
   FollowupResult,
   FollowupTemplate,
+  ImportConflict,
+  ImportRow,
   Message,
   OverdueList,
+  PreviewResult,
   Refusal,
   ReschedulePlan,
+  Resolution,
   Resume,
   RowIssue,
   SendWindow,
@@ -34,6 +39,8 @@ export class ApiError extends Error {
   readonly refused?: Refusal[];
   /** 422 upload: every row was rejected. */
   readonly rowErrors?: RowIssue[];
+  /** 409 import commit: duplicate emails that still need a decision (`code: needs_resolution`). */
+  readonly conflicts?: ImportConflict[];
   /** 409 delete refusal: some contacts were already emailed; repeat with force=true to delete anyway. */
   readonly needsForce: boolean;
   readonly protectedCount?: number;
@@ -43,11 +50,12 @@ export class ApiError extends Error {
     this.name = "ApiError";
     this.status = status;
     this.body = body;
-    const b = body as { refused?: unknown; errors?: unknown; code?: unknown; protectedCount?: unknown } | null;
+    const b = body as { refused?: unknown; errors?: unknown; conflicts?: unknown; code?: unknown; protectedCount?: unknown } | null;
     this.needsForce = status === 409 && b?.code === "needs_force";
     if (this.needsForce && typeof b?.protectedCount === "number") this.protectedCount = b.protectedCount;
     if (Array.isArray(b?.refused)) this.refused = b.refused as Refusal[];
     if (Array.isArray(b?.errors)) this.rowErrors = b.errors as RowIssue[];
+    if (status === 409 && b?.code === "needs_resolution" && Array.isArray(b.conflicts)) this.conflicts = b.conflicts as ImportConflict[];
   }
 }
 
@@ -187,6 +195,16 @@ export function createApi(options: ApiOptions = {}) {
       if (name?.trim()) form.append("name", name.trim());
       form.append("file", file, file.name);
       return request<UploadResult>("POST", "/api/batches", { form });
+    },
+    /** Parses and validates a CSV and reports duplicates; nothing is saved. */
+    previewBatch(file: File): Promise<PreviewResult> {
+      const form = new FormData();
+      form.append("file", file, file.name);
+      return request<PreviewResult>("POST", "/api/batches/preview", { form });
+    },
+    /** Saves the (edited) preview rows as a batch. `resolutions` is keyed by lowercased email. A 409 needs_resolution carries `conflicts`. */
+    commitBatch(body: { name: string; filename: string; rows: ImportRow[]; resolutions: Record<string, Resolution> }): Promise<CommitResult> {
+      return request<CommitResult>("POST", "/api/batches/commit", { json: body });
     },
     async listBatches(): Promise<BatchSummary[]> {
       return (await request<{ batches: BatchSummary[] }>("GET", "/api/batches")).batches;

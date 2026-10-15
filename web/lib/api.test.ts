@@ -151,6 +151,33 @@ describe("api client 401 and errors", () => {
     expect(upload.headers.get("X-CSRF-Token")).toBe("tok-1");
   });
 
+  it("previews a CSV as multipart without saving, and commits JSON rows with resolutions", async () => {
+    const row = { row: 2, company: "A", role: "R", person: "P", email: "a@x.com", subject: "S", mailText: "M", followupText: null };
+    const f = fakeFetch((c) => json(c.url === "/api/batches/preview" ? { filename: "leads.csv", suggestedName: "leads", rows: [row], errors: [], conflicts: [] } : { batch: { id: "b" }, contacts: [], errors: [], warnings: [], skipped: 1, replaced: 0 }, c.url.endsWith("commit") ? 201 : 200));
+    const api = createApi({ fetch: f.fn, onUnauthorized: vi.fn() });
+    const prev = await api.previewBatch(new File(["a,b"], "leads.csv", { type: "text/csv" }));
+    expect(prev.rows).toEqual([row]);
+    const p = f.calls.find((c) => c.url === "/api/batches/preview")!;
+    expect(p.body).toBeInstanceOf(FormData);
+    expect(p.headers.get("X-CSRF-Token")).toBe("tok-1");
+    const body = { name: "Leads", filename: "leads.csv", rows: [row], resolutions: { "a@x.com": "skip" as const } };
+    await api.commitBatch(body);
+    const c = f.calls.find((x) => x.url === "/api/batches/commit")!;
+    expect(c.method).toBe("POST");
+    expect(c.headers.get("content-type")).toBe("application/json");
+    expect(JSON.parse(c.body as string)).toEqual(body);
+  });
+
+  it("exposes the conflicts of a 409 needs_resolution commit, and only for that code", async () => {
+    const conflicts = [{ row: 2, email: "a@x.com", replaceable: true, matches: [] }];
+    const f = fakeFetch(() => json({ error: "Duplicate emails need a decision", code: "needs_resolution", conflicts }, 409));
+    const api = createApi({ fetch: f.fn, onUnauthorized: vi.fn() });
+    const err = await api.commitBatch({ name: "n", filename: "f.csv", rows: [], resolutions: {} }).catch((e) => e);
+    expect(err.conflicts).toEqual(conflicts);
+    const other = new ApiError(409, "x", { code: "not_replaceable", conflicts });
+    expect(other.conflicts).toBeUndefined();
+  });
+
   it("maps network failures to a readable ApiError", async () => {
     const api = createApi({
       fetch: (async () => {
