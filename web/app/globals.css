@@ -3,7 +3,7 @@
 
 /*
   Outbox design tokens.
-  Language: Linear / Resend. Inter, a 4px grid, 8px radii (6px on small controls), near-black and
+  Language: Linear / Resend. Geist, a 4px grid, 8px radii (6px on small controls), near-black and
   near-white neutrals, hairline borders, and one restrained indigo accent. Status colours exist
   only on badges and meters. Light and dark are both token sets; `.dark` on <html> selects dark
   (set before first paint by the nonce'd script in app/layout.tsx).
@@ -14,13 +14,13 @@
 :root {
   --radius: 0.5rem;
 
-  --background: #fbfbfc;
+  --background: #f6f6f9;
   --foreground: #16171a;
   --card: #ffffff;
   --card-foreground: #16171a;
   --popover: #ffffff;
   --popover-foreground: #16171a;
-  --primary: #5e6ad2;
+  --primary: #4f5bd5;
   --primary-foreground: #ffffff;
   --secondary: #f1f1f4;
   --secondary-foreground: #26272c;
@@ -32,9 +32,9 @@
   --destructive: #c4283c;
   --border: #e6e7ec;
   --input: #d9dbe2;
-  --ring: #5e6ad2;
+  --ring: #4f5bd5;
 
-  --sidebar: #f6f6f8;
+  --sidebar: #fbfbfc;
   --sidebar-foreground: #3a3d46;
   --sidebar-border: #e6e7ec;
 
@@ -98,13 +98,13 @@
 }
 
 @theme inline {
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
 
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-xl: calc(var(--radius) + 6px);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -154,8 +154,7 @@
   }
   body {
     @apply bg-background text-foreground font-sans text-[13px] leading-5 antialiased;
-    font-feature-settings: "cv11", "ss01", "tnum";
-    font-variant-numeric: tabular-nums;
+        font-variant-numeric: tabular-nums;
   }
   h1,
   h2,

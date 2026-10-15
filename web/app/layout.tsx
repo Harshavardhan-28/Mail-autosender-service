@@ -1,14 +1,14 @@
 import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import { connection } from "next/server";
-import { Geist_Mono, Inter } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { Toaster } from "@/components/Toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { themeInitScript } from "@/lib/theme";
 import "./globals.css";
 
-const sans = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
+const sans = Geist({ subsets: ["latin"], variable: "--font-geist-sans", display: "swap" });
 const mono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono", display: "swap" });
 
 export const metadata: Metadata = {

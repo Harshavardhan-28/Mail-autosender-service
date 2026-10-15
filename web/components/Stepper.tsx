@@ -1,35 +1,36 @@
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const STEPS = ["Upload & review", "Preview", "Schedule"] as const;
+const STEPS = [
+  { title: "Upload", desc: "Choose a CSV file" },
+  { title: "Review", desc: "Fix errors and duplicates" },
+  { title: "Schedule", desc: "Pick when it sends" },
+] as const;
 
-/** Three-step progress: `current` is 1-based; steps before it show a check. `current` 4 means all done. */
+/** Three-step tabs for the import flow: `current` is 1-based; steps before it show a check. `current` 4 means all done. */
 export function Stepper({ current, className }: { current: 1 | 2 | 3 | 4; className?: string }) {
   return (
-    <nav aria-label="Progress" className={cn("mb-6", className)}>
-      <ol className="flex items-center gap-2">
-        {STEPS.map((label, i) => {
+    <nav aria-label="Progress" className={cn("mt-[18px]", className)}>
+      <ol className="flex flex-wrap">
+        {STEPS.map(({ title, desc }, i) => {
           const n = i + 1;
           const done = current > n;
           const active = current === n;
           return (
-            <li key={label} className="flex items-center gap-2 not-last:flex-1" aria-current={active ? "step" : undefined}>
+            <li key={title} aria-current={active ? "step" : undefined} className={cn("mr-[22px] flex items-center gap-2.5 border-b-2 py-3 pr-[22px]", active ? "border-primary" : "border-transparent")}>
               <span
                 aria-hidden="true"
-                className={cn(
-                  "grid size-5 shrink-0 place-items-center rounded-full border text-[11px] font-medium tabular-nums",
-                  done && "border-primary bg-primary text-primary-foreground",
-                  active && "border-primary text-accent-text",
-                  !done && !active && "text-muted-foreground",
-                )}
+                className={cn("grid size-6 shrink-0 place-items-center rounded-full text-xs font-[650] tabular-nums", done || active ? "bg-primary text-primary-foreground" : "bg-accent text-muted-foreground")}
               >
                 {done ? <Check className="size-3" strokeWidth={3} /> : n}
               </span>
-              <span className={cn("text-[13px] whitespace-nowrap", active ? "font-medium text-foreground" : "text-muted-foreground")}>
-                {label}
-                {done && <span className="sr-only"> (done)</span>}
+              <span>
+                <span className={cn("block text-[13.5px] font-semibold", active ? "text-foreground" : "text-muted-foreground")}>
+                  {title}
+                  {done && <span className="sr-only"> (done)</span>}
+                </span>
+                <span className="block text-[11.5px] text-muted-foreground">{desc}</span>
               </span>
-              {n < STEPS.length && <span aria-hidden="true" className={cn("h-px flex-1", done ? "bg-primary" : "bg-border")} />}
             </li>
           );
         })}

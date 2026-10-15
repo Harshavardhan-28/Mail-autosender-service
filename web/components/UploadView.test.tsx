@@ -91,6 +91,25 @@ describe("UploadView", () => {
     expect(await screen.findByRole("button", { name: /schedule \d+ email/i })).toBeInTheDocument();
   });
 
+  it("uses the batch name typed on the file step as the review name and saves it", async () => {
+    const rows = [row(2, "a@x.com")];
+    let sent: Record<string, unknown> | null = null;
+    stub({
+      preview: () => json({ filename: "leads.csv", suggestedName: "leads", rows, errors: [], conflicts: [] }),
+      commit: (b) => {
+        sent = b;
+        return json({ batch, contacts: [contact("c1", rows[0]!)], errors: [], warnings: [], skipped: 0, replaced: 0 }, 201);
+      },
+    });
+    render(<UploadView />);
+    await userEvent.type(screen.getByLabelText("Batch name (optional)"), "  October wave  ");
+    await chooseFile();
+    expect(await screen.findByLabelText("Batch name")).toHaveValue("October wave");
+    await userEvent.click(screen.getByRole("button", { name: "Save to database" }));
+    expect(await screen.findByText("Batch uploaded")).toBeInTheDocument();
+    expect(sent).toMatchObject({ name: "October wave" });
+  });
+
   it("asks about known duplicates, commits the edited rows with the decisions, and reports skipped/replaced", async () => {
     const rows = [row(2, "a@x.com"), row(3, "B@x.com"), row(4, "c@x.com")];
     let sent: Record<string, unknown> | null = null;

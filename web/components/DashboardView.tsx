@@ -2,91 +2,20 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, CalendarClock, Inbox, Loader2, RefreshCw } from "lucide-react";
+import { ArrowRight, CalendarClock, CircleAlert, Inbox, Loader2, RefreshCw, Reply, Send, Upload, type LucideIcon } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
-import { eventLabel, formatDateTime, formatShort, percent, plural, statusLabel } from "@/lib/format";
+import { eventLabel, formatDateTime, formatDay, formatShort, formatTime, percent, plural, statusLabel } from "@/lib/format";
 import type { ContactStatus, Dashboard, SweepResult } from "@/lib/types";
 import { useMode } from "./AppShell";
 import { Notice } from "./Notice";
 import { OverdueBanner } from "./OverdueBanner";
-import { PageHeader } from "./PageHeader";
-import { Postmark } from "./Postmark";
+import { Dyn, hueClass, initials } from "./Dyn";
+import { PageBody, PageHeader } from "./PageHeader";
 import { SendHoldBanner } from "./SendHoldBanner";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
-// Charts are SVG with presentation attributes only (no style attributes: strict CSP).
-const PIPELINE: ContactStatus[] = ["uploaded", "scheduled", "sent", "replied"];
-const OUTCOMES: ContactStatus[] = ["bounced", "opted_out", "failed"];
-
-const FILL: Record<string, string> = {
-  uploaded: "fill-muted-foreground/45",
-  scheduled: "fill-st-indigo",
-  sent: "fill-st-green",
-  replied: "fill-st-violet",
-  bounced: "fill-st-red",
-  opted_out: "fill-muted-foreground/45",
-  failed: "fill-st-red",
-  warn: "fill-st-amber",
-};
-
-function Bars({ items, max }: { items: { key: string; label: string; value: number }[]; max: number }) {
-  return (
-    <ul className="space-y-2.5">
-      {items.map((it) => {
-        const w = max > 0 ? Math.max(it.value > 0 ? 1.5 : 0, (it.value / max) * 100) : 0;
-        return (
-          <li key={it.key} className="grid grid-cols-[6.5rem_1fr_2rem] items-center gap-3">
-            <span className="truncate text-[13px] text-muted-foreground">{it.label}</span>
-            <svg className="h-2 w-full" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true" focusable="false">
-              <rect className="fill-muted" x="0" y="0" width="100" height="10" rx="2" />
-              <rect className={FILL[it.key]} x="0" y="0" width={w} height="10" rx="2" />
-            </svg>
-            <span className="text-right text-[13px] tabular-nums">{it.value}</span>
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-function CapMeter({ sent, cap }: { sent: number; cap: number }) {
-  const ratio = cap > 0 ? Math.min(1, sent / cap) : 0;
-  return (
-    <div className="space-y-2.5">
-      <p className="flex items-baseline gap-1 text-2xl font-semibold tracking-tight">
-        <span className="tabular-nums">{sent}</span>
-        <span className="text-sm font-normal text-muted-foreground">/ {cap}</span>
-      </p>
-      <svg className="h-1.5 w-full" viewBox="0 0 100 6" preserveAspectRatio="none" role="img" aria-label={`${sent} of ${cap} daily sends used`}>
-        <rect className="fill-muted" x="0" y="0" width="100" height="6" rx="1.5" />
-        <rect className={ratio >= 0.9 ? FILL.warn : "fill-primary"} x="0" y="0" width={ratio * 100} height="6" rx="1.5" />
-      </svg>
-    </div>
-  );
-}
-
-function Stat({ label, hint, children }: { label: string; hint?: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <Card className="gap-0">
-      <CardHeader className="px-4 pt-3.5 pb-1.5 sm:px-5 sm:pt-4 sm:pb-2">
-        <h2 className="text-xs font-medium text-muted-foreground">{label}</h2>
-      </CardHeader>
-      <CardContent className="space-y-1 px-4 pb-4 sm:px-5 sm:pb-5">
-        {children}
-        {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
-      </CardContent>
-    </Card>
-  );
-}
-
-function BigNumber({ children }: { children: React.ReactNode }) {
-  return <p className="text-2xl font-semibold tracking-tight tabular-nums">{children}</p>;
-}
 
 function Empty({ icon: Icon, children }: { icon: typeof Inbox; children: React.ReactNode }) {
   return (
@@ -103,20 +32,71 @@ function sweepSummary(r: SweepResult): string {
   return `Checked ${plural(r.checked ?? 0, "thread")}, found ${plural(r.replied ?? 0, "reply", "replies")}.`;
 }
 
+const CARD = "rounded-[14px] border bg-card";
+
+function StatCard({ icon: Icon, tone, label, children, hint }: { icon: LucideIcon; tone: string; label: string; children: React.ReactNode; hint?: React.ReactNode }) {
+  return (
+    <div className={cn(CARD, "flex flex-col gap-2.5 px-[18px] py-4")}>
+      <div className="flex items-center gap-2 text-[12.5px] font-medium text-muted-foreground">
+        <span className={cn("grid size-[26px] place-items-center rounded-[7px]", tone)}>
+          <Icon aria-hidden="true" className="size-3.5" />
+        </span>
+        {label}
+      </div>
+      {children}
+      {hint && <div className="text-xs text-muted-foreground">{hint}</div>}
+    </div>
+  );
+}
+
+const Big = ({ children }: { children: React.ReactNode }) => <div className="text-[30px] leading-9 font-[650] tracking-[-0.02em] tabular-nums">{children}</div>;
+
+const PIPE: { key: ContactStatus; bar: string }[] = [
+  { key: "uploaded", bar: "bg-[#a7aab8]" },
+  { key: "scheduled", bar: "bg-[#6d78f0]" },
+  { key: "sent", bar: "bg-[#30a46c]" },
+  { key: "replied", bar: "bg-[#b38cf0]" },
+];
+
+const EVENT_TONE: Record<string, { icon: LucideIcon; tone: string }> = {
+  reply_detected: { icon: Reply, tone: "bg-st-violet-bg text-st-violet" },
+  message_sent: { icon: Send, tone: "bg-st-green-bg text-st-green" },
+  message_scheduled: { icon: CalendarClock, tone: "bg-st-indigo-bg text-st-indigo" },
+  batch_imported: { icon: Upload, tone: "bg-st-neutral-bg text-st-neutral" },
+};
+
+function SectionCard({ id, title, action, children }: { id: string; title: string; action?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <section className={cn(CARD, "px-5 py-[18px]")} aria-labelledby={id}>
+      <div className="mb-2.5 flex items-center">
+        <h2 id={id} className="flex-1 text-[15px] font-semibold">
+          {title}
+        </h2>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+const linkCls = "text-[12.5px] font-semibold text-primary hover:underline";
+
 function DashboardSkeleton() {
   return (
     <div aria-busy="true" aria-label="Loading the dashboard">
-      <PageHeader title="Dashboard" description="Loading…" />
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
-          <Skeleton key={i} className="h-28 rounded-lg" />
-        ))}
-      </div>
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        {[0, 1, 2, 3].map((i) => (
-          <Skeleton key={i} className="h-64 rounded-lg" />
-        ))}
-      </div>
+      <PageHeader eyebrow="Workspace / Dashboard" title="Dashboard" description="Loading…" />
+      <PageBody className="space-y-4">
+        <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-32 rounded-[14px]" />
+          ))}
+        </div>
+        <div className="grid gap-3.5 lg:grid-cols-2">
+          {[0, 1].map((i) => (
+            <Skeleton key={i} className="h-64 rounded-[14px]" />
+          ))}
+        </div>
+      </PageBody>
     </div>
   );
 }
@@ -159,93 +139,137 @@ export function DashboardView() {
   if (error && !data) {
     return (
       <div>
-        <PageHeader title="Dashboard" />
-        <Notice tone="danger" role="alert">
-          {error}
-        </Notice>
+        <PageHeader eyebrow="Workspace / Dashboard" title="Dashboard" />
+        <PageBody>
+          <Notice tone="danger" role="alert">
+            {error}
+          </Notice>
+        </PageBody>
       </div>
     );
   }
   if (!data) return <DashboardSkeleton />;
 
   const t = data.totals;
-  const pipelineMax = Math.max(1, ...PIPELINE.map((s) => t[s]), ...OUTCOMES.map((s) => t[s]));
-  const companyMax = Math.max(1, ...data.byCompany.map((c) => c.total));
+  const total = Object.values(t).reduce((a, b) => a + b, 0);
+  const pipeMax = Math.max(1, ...PIPE.map((p) => t[p.key]));
   const sw = data.sweep;
+  const capRatio = data.dailyCap > 0 ? Math.min(100, (data.sentToday / data.dailyCap) * 100) : 0;
+  const attention = t.failed + t.bounced;
+  const next = data.upcoming[0];
 
   return (
-    <div className="space-y-4">
+    <div>
       <PageHeader
+        eyebrow="Workspace / Dashboard"
         title="Dashboard"
-        description={data.dryRun ? "Dry run: counts reflect simulated sends." : "Live: counts reflect delivered email."}
+        description={data.dryRun ? "Dry run: counts reflect simulated sends." : undefined}
         actions={
-          <Button variant="outline" size="sm" onClick={load}>
-            <RefreshCw />
-            Refresh
-          </Button>
-        }
-        className="mb-2"
-      />
-
-      {data.sendHold && <SendHoldBanner hold={data.sendHold} />}
-      <OverdueBanner onRescheduled={load} />
-
-      <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4" aria-label="Today">
-        <Stat label="Sent in the last 24 h">
-          <CapMeter sent={data.sentToday} cap={data.dailyCap} />
-        </Stat>
-        <Stat label="Reply rate" hint="of contacts whose first email was sent">
-          <BigNumber>{percent(data.repliedRate)}</BigNumber>
-        </Stat>
-        <Stat label="Waiting to send" hint="contacts scheduled">
-          <BigNumber>{t.scheduled}</BigNumber>
-        </Stat>
-        <Stat
-          label="Needs a look"
-          hint={
-            <>
-              <Link href="/contacts?status=failed" className="text-accent-text underline-offset-2 hover:underline">
-                failed
-              </Link>{" "}
-              or{" "}
-              <Link href="/contacts?status=bounced" className="text-accent-text underline-offset-2 hover:underline">
-                bounced
+          <>
+            <Button variant="outline" onClick={load}>
+              <RefreshCw />
+              Refresh
+            </Button>
+            <Button asChild>
+              <Link href="/upload">
+                <Upload />
+                Upload CSV
               </Link>
-            </>
-          }
-        >
-          <BigNumber>{t.failed + t.bounced}</BigNumber>
-        </Stat>
-      </section>
+            </Button>
+          </>
+        }
+      />
+      <PageBody className="flex flex-col gap-[18px]">
+        {data.sendHold && <SendHoldBanner hold={data.sendHold} />}
+        <OverdueBanner onRescheduled={load} />
+        {attention > 0 && (
+          <Link
+            href="/mail?tab=attention"
+            className="flex items-center gap-3 rounded-xl border border-st-amber/25 bg-st-amber-bg px-4 py-3 text-[13.5px] text-st-amber"
+          >
+            <CircleAlert aria-hidden="true" className="size-4" />
+            <span className="flex-1 text-foreground">
+              <b className="text-st-amber">{plural(attention, "contact")} need a look.</b> {t.failed} failed, {t.bounced} bounced.
+            </span>
+            <span className="flex items-center gap-1 font-semibold whitespace-nowrap">
+              Review in Mail <ArrowRight className="size-3.5" />
+            </span>
+          </Link>
+        )}
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="gap-0" aria-labelledby="h-pipeline" role="region">
-          <CardHeader>
-            <h2 id="h-pipeline" className="text-sm leading-5 font-medium">Pipeline</h2>
-            <CardDescription>Where every contact stands</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            <Bars items={PIPELINE.map((s) => ({ key: s, label: statusLabel(s), value: t[s] }))} max={pipelineMax} />
-            <div className="space-y-2.5 border-t pt-4">
-              <h3 className="text-xs font-medium text-muted-foreground">Stopped</h3>
-              <Bars items={OUTCOMES.map((s) => ({ key: s, label: statusLabel(s), value: t[s] }))} max={pipelineMax} />
+        <section className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4" aria-label="Today">
+          <StatCard icon={Send} tone="bg-st-indigo-bg text-primary" label="Sent in the last 24 h">
+            <div className="flex items-baseline gap-1.5">
+              <Big>{data.sentToday}</Big>
+              <span className="text-sm text-muted-foreground">/ {data.dailyCap} daily cap</span>
             </div>
-          </CardContent>
-        </Card>
-
-        <Card className="gap-0" aria-labelledby="h-upcoming" role="region">
-          <CardHeader>
-            <h2 id="h-upcoming" className="text-sm leading-5 font-medium">Next sends</h2>
-            <CardDescription>Queued in time order</CardDescription>
-            <CardAction>
-              <Button asChild variant="ghost" size="sm">
-                <Link href="/mail?tab=scheduled">
-                  View all <ArrowUpRight />
+            <div className="h-1.5 overflow-hidden rounded-[3px] bg-accent" role="img" aria-label={`${data.sentToday} of ${data.dailyCap} daily sends used`}>
+              <Dyn w={capRatio} className={cn("h-full rounded-[3px]", capRatio >= 90 ? "bg-st-amber" : "bg-gradient-to-r from-[#6d78f0] to-[#4f5bd5]")} />
+            </div>
+          </StatCard>
+          <StatCard icon={Reply} tone="bg-st-violet-bg text-st-violet" label="Reply rate" hint="of contacts whose first email was sent">
+            <Big>{percent(data.repliedRate)}</Big>
+          </StatCard>
+          <StatCard
+            icon={CalendarClock}
+            tone="bg-[#e3f1fb] text-[#1b6aa5] dark:bg-[#10243a] dark:text-[#7fc0f0]"
+            label="Waiting to send"
+            hint={next ? `Next: ${formatShort(next.scheduledFor)} to ${next.person}` : "contacts scheduled"}
+          >
+            <Big>{t.scheduled}</Big>
+          </StatCard>
+          <StatCard
+            icon={CircleAlert}
+            tone="bg-st-red-bg text-st-red"
+            label="Needs a look"
+            hint={
+              <>
+                <Link href="/contacts?status=failed" className="text-primary hover:underline">
+                  {t.failed} failed
+                </Link>{" "}
+                ·{" "}
+                <Link href="/contacts?status=bounced" className="text-primary hover:underline">
+                  {t.bounced} bounced
                 </Link>
-              </Button>
-            </CardAction>
-          </CardHeader>
-          <CardContent>
+              </>
+            }
+          >
+            <Big>{attention}</Big>
+          </StatCard>
+        </section>
+
+        <div className="grid gap-3.5 lg:grid-cols-2">
+          <SectionCard id="h-pipeline" title="Pipeline">
+            <p className="-mt-2 mb-[18px] text-[12.5px] text-muted-foreground">Where every contact stands · {total} total</p>
+            <div className="flex flex-col gap-3">
+              {PIPE.map((p) => (
+                <div key={p.key} className="grid grid-cols-[6rem_minmax(0,1fr)_2.75rem_2.9rem] items-center gap-3">
+                  <span className="text-[13px]">{statusLabel(p.key)}</span>
+                  <div className="h-[22px] overflow-hidden rounded-md bg-muted">
+                    <Dyn w={(t[p.key] / pipeMax) * 100} className={cn("h-full rounded-md", p.bar)} />
+                  </div>
+                  <span className="text-right text-[13px] font-semibold tabular-nums">{t[p.key]}</span>
+                  <span className="text-right text-xs text-muted-foreground tabular-nums">{total ? `${Math.round((t[p.key] / total) * 100)}%` : "—"}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-[18px] flex flex-wrap items-center gap-2.5 border-t pt-3.5">
+              <span className="mr-1 text-xs font-semibold text-muted-foreground">Stopped</span>
+              <span className="rounded-full bg-st-red-bg px-2.5 py-0.5 text-xs font-medium text-st-red">Bounced {t.bounced}</span>
+              <span className="rounded-full bg-st-neutral-bg px-2.5 py-0.5 text-xs font-medium text-st-neutral">Opted out {t.opted_out}</span>
+              <span className="rounded-full bg-st-red-bg px-2.5 py-0.5 text-xs font-medium text-st-red">Failed {t.failed}</span>
+            </div>
+          </SectionCard>
+
+          <SectionCard
+            id="h-upcoming"
+            title="Next sends"
+            action={
+              <Link href="/mail?tab=scheduled" className={linkCls}>
+                View queue
+              </Link>
+            }
+          >
             {data.upcoming.length === 0 ? (
               <Empty icon={CalendarClock}>
                 Nothing scheduled.{" "}
@@ -255,148 +279,162 @@ export function DashboardView() {
                 to plan the next batch.
               </Empty>
             ) : (
-              <ol className="-mx-2 divide-y">
-                {data.upcoming.map((u) => (
-                  <li key={u.messageId}>
-                    <Link
-                      href={`/mail/${encodeURIComponent(u.messageId)}`}
-                      className="grid grid-cols-[6.5rem_1fr_auto] items-center gap-3 rounded-md px-2 py-2.5 transition-colors hover:bg-accent/60 focus-visible:ring-[3px] focus-visible:ring-ring/30"
-                    >
-                      <Postmark at={u.scheduledFor} />
-                      <div className="min-w-0">
-                        <div className="truncate text-[13px] font-medium">{u.person}</div>
-                        <div className="truncate font-mono text-xs text-muted-foreground">{u.email}</div>
-                      </div>
-                      <Badge variant="outline" className="max-w-32 truncate rounded-md text-[11px] font-normal">
-                        {u.kind === "followup" ? "Follow-up" : u.company}
-                      </Badge>
-                    </Link>
-                  </li>
-                ))}
+              <ol>
+                {data.upcoming.map((u) => {
+                  const d = new Date(u.scheduledFor);
+                  return (
+                    <li key={u.messageId}>
+                      <Link href={`/mail/${encodeURIComponent(u.messageId)}`} className="flex items-center gap-3 border-t py-2.5 first:border-t-0">
+                        <time dateTime={d.toISOString()} className="w-[52px] shrink-0 rounded-lg border py-1 text-center">
+                          <span className="block text-[10px] font-semibold text-muted-foreground uppercase">{formatDay(d).split(",")[0]}</span>
+                          <span className="block text-[13px] font-semibold">{formatTime(d)}</span>
+                        </time>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[13.5px] font-[550]">{u.person}</div>
+                          <div className="truncate font-mono text-[11.5px] text-muted-foreground">{u.email}</div>
+                        </div>
+                        <span
+                          className={cn(
+                            "max-w-32 truncate rounded-md px-2 py-0.5 text-[11.5px] font-medium",
+                            u.kind === "followup" ? "bg-st-violet-bg text-st-violet" : "bg-secondary text-secondary-foreground",
+                          )}
+                        >
+                          {u.kind === "followup" ? "Follow-up" : u.company}
+                        </span>
+                      </Link>
+                    </li>
+                  );
+                })}
               </ol>
             )}
-          </CardContent>
-        </Card>
+          </SectionCard>
+        </div>
 
-        <Card className="gap-0" aria-labelledby="h-companies" role="region">
-          <CardHeader>
-            <h2 id="h-companies" className="text-sm leading-5 font-medium">Top companies</h2>
-          </CardHeader>
-          <CardContent className="px-0">
+        <div className="grid gap-3.5 lg:grid-cols-2">
+          <SectionCard
+            id="h-companies"
+            title="Top companies"
+            action={
+              <Link href="/analytics" className={linkCls}>
+                All companies
+              </Link>
+            }
+          >
             {data.byCompany.length === 0 ? (
-              <div className="px-5">
-                <Empty icon={Inbox}>No contacts yet.</Empty>
-              </div>
+              <Empty icon={Inbox}>No contacts yet.</Empty>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead className="pl-5">Company</TableHead>
-                    <TableHead className="text-right">Contacts</TableHead>
-                    <TableHead className="text-right">Sent</TableHead>
-                    <TableHead className="pr-5 text-right">Replied</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.byCompany.map((c) => (
-                    <TableRow key={c.company}>
-                      <TableCell className="pl-5">
-                        <div className="truncate font-medium">{c.company}</div>
-                        <svg className="mt-1.5 h-1 w-full max-w-40" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true" focusable="false">
-                          <rect className="fill-muted" x="0" y="0" width="100" height="4" rx="1" />
-                          <rect className="fill-muted-foreground/40" x="0" y="0" width={(c.total / companyMax) * 100} height="4" rx="1" />
-                          <rect className={FILL.sent} x="0" y="0" width={(c.sent / companyMax) * 100} height="4" rx="1" />
-                          <rect className={FILL.replied} x="0" y="0" width={(c.replied / companyMax) * 100} height="4" rx="1" />
-                        </svg>
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">{c.total}</TableCell>
-                      <TableCell className="text-right tabular-nums">{c.sent}</TableCell>
-                      <TableCell className="pr-5 text-right tabular-nums">{c.replied}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <>
+                <div className="grid grid-cols-[minmax(0,1fr)_3.4rem_3.4rem_3.6rem] gap-2 py-1.5 text-[11px] font-semibold tracking-[0.05em] text-muted-foreground uppercase">
+                  <span>Company</span>
+                  <span className="text-right">Sent</span>
+                  <span className="text-right">Replied</span>
+                  <span className="text-right">Rate</span>
+                </div>
+                {data.byCompany.map((c) => {
+                  const rate = c.sent > 0 ? (c.replied / c.sent) * 100 : 0;
+                  return (
+                    <div key={c.company} className="grid grid-cols-[minmax(0,1fr)_3.4rem_3.4rem_3.6rem] items-center gap-2 border-t py-[9px] text-[13px]">
+                      <div className="flex min-w-0 items-center gap-[9px]">
+                        <span className={cn("grid size-6 shrink-0 place-items-center rounded-[7px] text-[11px] font-[650] text-white", hueClass(c.company))}>{initials(c.company)}</span>
+                        <span className="truncate font-medium">{c.company}</span>
+                      </div>
+                      <span className="text-right tabular-nums">{c.sent}</span>
+                      <span className="text-right tabular-nums">{c.replied}</span>
+                      <span className={cn("text-right font-semibold tabular-nums", rate >= 20 ? "text-st-green" : rate >= 12 ? "text-st-indigo" : "text-st-amber")}>
+                        {c.sent > 0 ? `${Math.round(rate)}%` : "—"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </>
             )}
-          </CardContent>
-        </Card>
+          </SectionCard>
 
-        <Card className="gap-0" aria-labelledby="h-events" role="region">
-          <CardHeader>
-            <h2 id="h-events" className="text-sm leading-5 font-medium">Recent activity</h2>
-          </CardHeader>
-          <CardContent>
+          <SectionCard id="h-events" title="Recent activity">
             {data.recentEvents.length === 0 ? (
               <Empty icon={Inbox}>No activity yet.</Empty>
             ) : (
-              <ol className="max-h-80 space-y-0 overflow-y-auto">
-                {data.recentEvents.map((e) => (
-                  <li key={e.id} className="grid grid-cols-[6.75rem_1fr] items-baseline gap-x-3 border-b py-2 last:border-0 first:pt-0">
-                    <time className="font-mono text-xs text-muted-foreground" dateTime={e.at}>
-                      {formatShort(e.at)}
-                    </time>
-                    <div className="min-w-0">
-                      {typeof e.meta?.messageId === "string" && e.type !== "message_cancelled" ? (
-                        <Link href={`/mail/${encodeURIComponent(e.meta.messageId)}`} className="text-[13px] font-medium underline-offset-2 hover:underline">
-                          {eventLabel(e.type)}
-                        </Link>
-                      ) : (
-                        <span className="text-[13px] font-medium">{eventLabel(e.type)}</span>
-                      )}
-                      {e.email && <span className="ml-2 inline-block max-w-full truncate align-bottom font-mono text-xs text-muted-foreground">{e.email}</span>}
-                    </div>
-                  </li>
-                ))}
+              <ol className="max-h-96 overflow-y-auto">
+                {data.recentEvents.map((e) => {
+                  const tone = EVENT_TONE[e.type] ?? { icon: Inbox, tone: "bg-st-neutral-bg text-st-neutral" };
+                  const Icon = tone.icon;
+                  const label = eventLabel(e.type);
+                  return (
+                    <li key={e.id} className="flex gap-3 border-t py-[9px] first:border-t-0">
+                      <span className={cn("grid size-7 shrink-0 place-items-center rounded-lg", tone.tone)}>
+                        <Icon aria-hidden="true" className="size-3.5" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        {typeof e.meta?.messageId === "string" && e.type !== "message_cancelled" ? (
+                          <Link href={`/mail/${encodeURIComponent(e.meta.messageId)}`} className="text-[13px] font-medium hover:underline">
+                            {label}
+                          </Link>
+                        ) : (
+                          <div className="text-[13px] font-medium">{label}</div>
+                        )}
+                        {e.email && <div className="truncate font-mono text-[11.5px] text-muted-foreground">{e.email}</div>}
+                      </div>
+                      <time className="text-[11.5px] whitespace-nowrap text-muted-foreground" dateTime={e.at}>
+                        {formatShort(e.at)}
+                      </time>
+                    </li>
+                  );
+                })}
               </ol>
             )}
-          </CardContent>
-        </Card>
-      </div>
+          </SectionCard>
+        </div>
 
-      <Card className="gap-0 scroll-mt-20" id="replies" aria-labelledby="h-replies" role="region">
-        <CardHeader>
-          <h2 id="h-replies" className="text-sm leading-5 font-medium">Reply checks</h2>
-          <CardDescription>The inbox is scanned for replies so follow-ups stop on their own.</CardDescription>
-          <CardAction>
-            <Button variant="outline" size="sm" onClick={sweep} disabled={sweeping}>
-              {sweeping && <Loader2 className="animate-spin" />}
-              {sweeping ? "Checking…" : "Check replies now"}
-            </Button>
-          </CardAction>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {data.followupsHeld && (
-            <Notice tone="warning">
-              <p>Follow-ups are on hold until a reply check succeeds. First emails are not affected.</p>
-            </Notice>
-          )}
+        <section id="replies" aria-labelledby="h-replies" className={cn(CARD, "flex scroll-mt-20 flex-wrap items-center gap-x-6 gap-y-3 px-5 py-4")}>
+          <div className="flex min-w-60 flex-1 items-center gap-2.5">
+            <span className="grid size-[34px] place-items-center rounded-[9px] bg-st-green-bg text-st-green">
+              <Inbox aria-hidden="true" className="size-4" />
+            </span>
+            <div>
+              <h2 id="h-replies" className="text-sm font-semibold">
+                Reply checks
+              </h2>
+              <p className="text-[12.5px] text-muted-foreground">The inbox is scanned for replies so follow-ups stop on their own.</p>
+            </div>
+          </div>
           {sw ? (
-            <dl className="grid gap-4 sm:grid-cols-3">
+            <>
               <div>
-                <dt className="text-xs text-muted-foreground">Last check</dt>
-                <dd className="mt-0.5 text-[13px]">
-                  {formatDateTime(sw.at)} ·{" "}
-                  <span className={cn("font-medium", sw.ok ? "text-st-green" : "text-st-red")}>{sw.ok ? "succeeded" : `failed${sw.errorCode ? ` (${sw.errorCode})` : ""}`}</span>
-                </dd>
+                <div className="text-[11.5px] text-muted-foreground">Last check</div>
+                <div className="text-[13px] font-medium">
+                  {formatDateTime(sw.at)} · <span className={sw.ok ? "text-st-green" : "text-st-red"}>{sw.ok ? "succeeded" : `failed${sw.errorCode ? ` (${sw.errorCode})` : ""}`}</span>
+                </div>
               </div>
               <div>
-                <dt className="text-xs text-muted-foreground">Last success</dt>
-                <dd className="mt-0.5 text-[13px]">{formatDateTime(sw.lastSuccessAt)}</dd>
+                <div className="text-[11.5px] text-muted-foreground">Last success</div>
+                <div className="text-[13px] font-medium">{formatDateTime(sw.lastSuccessAt)}</div>
               </div>
               <div>
-                <dt className="text-xs text-muted-foreground">Rows that errored</dt>
-                <dd className="mt-0.5 font-mono text-[13px]">{sw.rowErrors}</dd>
+                <div className="text-[11.5px] text-muted-foreground">Rows with errors</div>
+                <div className="font-mono text-[13px] font-medium">{sw.rowErrors}</div>
               </div>
-            </dl>
+            </>
           ) : (
             <p className="text-[13px] text-muted-foreground">{data.dryRun ? "Reply checks don't run in dry run." : "No reply check has run yet."}</p>
           )}
+          <Button variant="outline" onClick={sweep} disabled={sweeping}>
+            {sweeping ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            {sweeping ? "Checking…" : "Check replies now"}
+          </Button>
+          {data.followupsHeld && (
+            <div className="basis-full">
+              <Notice tone="warning">
+                <p>Follow-ups are on hold until a reply check succeeds. First emails are not affected.</p>
+              </Notice>
+            </div>
+          )}
           {sweepNote && (
-            <p className="text-[13px] text-muted-foreground" role="status">
+            <p className="basis-full text-[13px] text-muted-foreground" role="status">
               {sweepNote}
             </p>
           )}
-        </CardContent>
-      </Card>
+        </section>
+      </PageBody>
     </div>
   );
 }

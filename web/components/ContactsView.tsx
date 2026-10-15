@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { CalendarClock, ChevronLeft, ChevronRight, Loader2, Mail, MoreHorizontal, Paperclip, Search, Trash2, Users } from "lucide-react";
+import { CalendarClock, Check, ChevronLeft, ChevronRight, Layers, Loader2, MoreHorizontal, Paperclip, Search, Trash2, UserPlus, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { api, ApiError } from "@/lib/api";
 import { checkSendTime, toLocalInputValue, MAX_DAYS_AHEAD } from "@/lib/schedule";
@@ -14,7 +14,8 @@ import { DeleteDialog, deleteContactsCopy } from "./DeleteDialog";
 import { FollowupToggle } from "./FollowupToggle";
 import { Notice } from "./Notice";
 import { OverdueBanner } from "./OverdueBanner";
-import { PageHeader } from "./PageHeader";
+import { PageBody, PageHeader } from "./PageHeader";
+import { hueClass, initials } from "./Dyn";
 import { StatusBadge } from "./StatusBadge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -24,9 +25,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
+
+const STATUS_DOT: Record<ContactStatus, string> = {
+  uploaded: "bg-[#a7aab8]",
+  scheduled: "bg-[#6d78f0]",
+  sent: "bg-[#30a46c]",
+  replied: "bg-[#b38cf0]",
+  bounced: "bg-[#e5484d]",
+  opted_out: "bg-[#7a7e8a]",
+  failed: "bg-[#e5484d]",
+};
 
 const isStatus = (v: string | undefined): v is ContactStatus => !!v && (CONTACT_STATUSES as readonly string[]).includes(v);
 
@@ -196,7 +207,7 @@ function ResumePick({ contact, resumes, onDone }: { contact: ContactListItem; re
     }
   }
   return (
-    <div className="mt-1.5 w-56 max-w-full">
+    <div className="w-full max-w-56">
       <label className="sr-only" htmlFor={`rs-${contact.id}`}>
         Resume for {contact.email}
       </label>
@@ -227,6 +238,8 @@ export function ContactsView({ initialBatchId, initialStatus, initialQ }: { init
   const [tick, setTick] = useState(0);
   const [resumes, setResumes] = useState<Resume[]>([]);
   const [deletingBatch, setDeletingBatch] = useState(false);
+  const [sel, setSel] = useState<Record<string, boolean>>({});
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const reload = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
@@ -261,33 +274,51 @@ export function ContactsView({ initialBatchId, initialStatus, initialQ }: { init
   const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const currentBatch = batches.find((b) => b.id === batchId);
 
+  const counts = (currentBatch ? [currentBatch] : batches).reduce<Record<string, number>>((acc, b) => {
+    for (const [k, v] of Object.entries(b.statusCounts)) acc[k] = (acc[k] ?? 0) + (v ?? 0);
+    return acc;
+  }, {});
+  const grandTotal = (currentBatch ? [currentBatch] : batches).reduce((n, b) => n + b.contactCount, 0);
+  const rows = data?.contacts ?? [];
+  const selectedIds = rows.filter((c) => sel[c.id]).map((c) => c.id);
+  const allOn = rows.length > 0 && rows.every((c) => sel[c.id]);
+  const COLS = "grid-cols-[40px_minmax(200px,1.4fr)_minmax(150px,1fr)_120px_minmax(150px,1fr)_190px_190px_72px]";
+  const CB = "grid size-4 place-items-center rounded-[4px] border-[1.5px] text-white transition-colors";
+
   return (
     <div>
       <PageHeader
+        eyebrow="Workspace / Contacts"
         title="Contacts"
         description={
           <>
-            {currentBatch ? `Batch “${currentBatch.name}” · ${plural(currentBatch.contactCount, "contact")}` : `All batches · ${plural(total, "contact")}`}
+            {currentBatch ? `Batch “${currentBatch.name}” · ${plural(currentBatch.contactCount, "contact")}` : `${plural(grandTotal, "contact")} across ${plural(batches.length, "batch", "batches")}`}
             {mode?.dryRun ? " · dry run: nothing is delivered" : ""}
           </>
         }
         actions={
-          currentBatch && (
-            <>
-              {(currentBatch.statusCounts.uploaded ?? 0) > 0 && (
-                <Button size="sm" asChild>
-                  <Link href={`/batches/${encodeURIComponent(currentBatch.id)}`}>
-                    <CalendarClock />
-                    Schedule this batch
-                  </Link>
-                </Button>
-              )}
-              <Button size="sm" variant="outline" onClick={() => setDeletingBatch(true)}>
+          <>
+            {currentBatch && (currentBatch.statusCounts.uploaded ?? 0) > 0 && (
+              <Button variant="outline" asChild>
+                <Link href={`/batches/${encodeURIComponent(currentBatch.id)}`}>
+                  <CalendarClock />
+                  Schedule this batch
+                </Link>
+              </Button>
+            )}
+            {currentBatch && (
+              <Button variant="outline" onClick={() => setDeletingBatch(true)}>
                 <Trash2 />
                 Delete batch
               </Button>
-            </>
-          )
+            )}
+            <Button asChild>
+              <Link href="/upload">
+                <UserPlus />
+                Import contacts
+              </Link>
+            </Button>
+          </>
         }
       />
 
@@ -310,177 +341,237 @@ export function ContactsView({ initialBatchId, initialStatus, initialQ }: { init
         />
       )}
 
-      <OverdueBanner className="mb-4" onRescheduled={reload} />
+      <PageBody className="flex flex-col gap-3.5 pt-[22px]">
+        <OverdueBanner onRescheduled={reload} />
 
-      <form
-        className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-[14rem_11rem_minmax(0,1fr)]"
-        role="search"
-        onSubmit={(e) => {
-          e.preventDefault();
-          setPage(1);
-          setQ(search.trim());
-        }}
-      >
-        <div className="space-y-1.5">
-          <Label htmlFor="f-batch">Batch</Label>
-          <NativeSelect
-            id="f-batch"
-            value={batchId}
-            onChange={(e) => {
-              setPage(1);
-              setBatchId(e.target.value);
-            }}
-          >
-            <option value="">All batches</option>
-            {batches.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name} ({b.contactCount})
-              </option>
-            ))}
-          </NativeSelect>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="f-status">Status</Label>
-          <NativeSelect
-            id="f-status"
-            value={status}
-            onChange={(e) => {
-              setPage(1);
-              setStatus(e.target.value as ContactStatus | "");
-            }}
-          >
-            <option value="">Any status</option>
-            {CONTACT_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {statusLabel(s)}
-              </option>
-            ))}
-          </NativeSelect>
-        </div>
-        <div className="space-y-1.5 sm:col-span-2 lg:col-span-1">
-          <Label htmlFor="f-q">Search</Label>
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input id="f-q" type="search" maxLength={200} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Name, email, company, role or subject" className="pl-8" />
-            </div>
-            <Button type="submit" variant="outline">
-              Search
-            </Button>
+        <form
+          className="flex flex-wrap items-center gap-2.5"
+          role="search"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setPage(1);
+            setQ(search.trim());
+          }}
+        >
+          <div className="flex h-9 min-w-70 flex-[1_1_280px] items-center gap-2 rounded-lg border border-input bg-card px-3 text-muted-foreground">
+            <Search aria-hidden="true" className="size-3.5 shrink-0" />
+            <input
+              id="f-q"
+              type="search"
+              aria-label="Search"
+              maxLength={200}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name, email, company, role…"
+              className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
+            />
           </div>
+          <div className="relative">
+            <Layers aria-hidden="true" className="pointer-events-none absolute top-1/2 left-3 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <NativeSelect
+              id="f-batch"
+              aria-label="Batch"
+              className="[&_select]:h-9 [&_select]:bg-card [&_select]:pl-9"
+              value={batchId}
+              onChange={(e) => {
+                setPage(1);
+                setBatchId(e.target.value);
+              }}
+            >
+              <option value="">All batches</option>
+              {batches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name} ({b.contactCount})
+                </option>
+              ))}
+            </NativeSelect>
+          </div>
+          <Button type="submit" variant="outline" className="h-9">
+            Search
+          </Button>
+        </form>
+
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Status">
+          {(["", ...CONTACT_STATUSES] as const).map((k) => {
+            const on = status === k;
+            const n = k === "" ? grandTotal : (counts[k] ?? 0);
+            return (
+              <button
+                key={k || "all"}
+                type="button"
+                aria-pressed={on}
+                onClick={() => {
+                  setPage(1);
+                  setStatus(k);
+                }}
+                className={cn(
+                  "inline-flex h-[30px] items-center gap-[7px] rounded-full border px-[11px] text-[12.5px] font-medium whitespace-nowrap transition-colors",
+                  on ? "border-foreground bg-foreground text-background" : "bg-card hover:bg-accent",
+                )}
+              >
+                {k !== "" && <span aria-hidden="true" className={cn("size-[7px] rounded-full", STATUS_DOT[k])} />}
+                {k === "" ? "All" : statusLabel(k)}
+                <span className="opacity-65">{n}</span>
+              </button>
+            );
+          })}
         </div>
-      </form>
 
-      {error && (
-        <Notice tone="danger" role="alert" className="mb-4">
-          {error}
-        </Notice>
-      )}
+        {error && (
+          <Notice tone="danger" role="alert">
+            {error}
+          </Notice>
+        )}
 
-      <div className="rounded-lg border bg-card" aria-busy={loading}>
-        <Table className="md:min-w-[48rem]">
-          <caption className="sr-only">Contacts matching the filters</caption>
-          <TableHeader>
-            <TableRow className="hover:bg-transparent max-md:hidden">
-              <TableHead className="pl-4">Recipient</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Follow-up</TableHead>
-              <TableHead className="pr-4 text-right">
-                <span className="sr-only">Actions</span>
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody className="max-md:block">
+        {selectedIds.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2.5 rounded-[10px] bg-foreground px-3.5 py-2.5 text-[13px] text-background">
+            <b className="font-semibold">{selectedIds.length} selected</b>
+            <span className="flex-1" />
+            <button type="button" onClick={() => setBulkDeleting(true)} className="inline-flex h-[30px] items-center gap-1.5 rounded-[7px] border border-background/25 px-[11px] text-[12.5px] font-medium text-[#ff8f9a]">
+              <Trash2 className="size-3.5" />
+              Delete
+            </button>
+            <button type="button" onClick={() => setSel({})} className="h-[30px] px-2 text-[12.5px] font-medium opacity-70 hover:opacity-100">
+              Clear
+            </button>
+          </div>
+        )}
+        <DeleteDialog
+          open={bulkDeleting}
+          onClose={() => setBulkDeleting(false)}
+          {...deleteContactsCopy(selectedIds.length)}
+          perform={(force) => api.deleteContacts(selectedIds, force)}
+          onDeleted={() => {
+            setSel({});
+            reload();
+          }}
+        />
+
+        <div className="overflow-x-auto rounded-[14px] border bg-card" aria-busy={loading}>
+          <div className="min-w-[1080px]">
+            <div className={cn("grid items-center gap-3 border-b bg-sidebar px-[18px] py-[11px] text-[11px] font-semibold tracking-[0.05em] text-muted-foreground uppercase", COLS)}>
+              <button
+                type="button"
+                role="checkbox"
+                aria-checked={allOn}
+                aria-label="Select all on this page"
+                onClick={() => setSel(allOn ? {} : Object.fromEntries(rows.map((c) => [c.id, true])))}
+                className={cn(CB, allOn ? "border-primary bg-primary" : "border-[#c9cbd3] bg-card")}
+              >
+                {allOn && <Check className="size-[11px]" />}
+              </button>
+              <span>Recipient</span>
+              <span>Company · role</span>
+              <span>Status</span>
+              <span>Latest mail</span>
+              <span>Follow-up</span>
+              <span>Resume</span>
+              <span className="sr-only">Actions</span>
+            </div>
             {!data &&
               loading &&
               [0, 1, 2, 3, 4].map((i) => (
-                <TableRow key={i} className="hover:bg-transparent">
-                  <TableCell className="pl-4 max-md:block">
-                    <Skeleton className="h-4 w-40" />
-                    <Skeleton className="mt-1.5 h-3 w-52" />
-                  </TableCell>
-                  <TableCell>
-                    <Skeleton className="h-5 w-20" />
-                  </TableCell>
-                  <TableCell>
-                    <Skeleton className="h-5 w-32" />
-                  </TableCell>
-                  <TableCell className="pr-4">
-                    <Skeleton className="ml-auto h-7 w-7" />
-                  </TableCell>
-                </TableRow>
+                <div key={i} className="space-y-1.5 border-b px-[18px] py-3">
+                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="h-3 w-52" />
+                </div>
               ))}
-            {data?.contacts.map((c) => (
-              <TableRow key={c.id} className="relative align-top max-md:block max-md:py-3">
-                <TableCell className="max-w-72 pl-4 max-md:block max-md:max-w-none max-md:py-1 max-md:pr-14">
-                  <div className="truncate font-medium">{c.person}</div>
-                  <div className="truncate font-mono text-xs text-muted-foreground">{c.email}</div>
-                  <div className="truncate text-xs text-muted-foreground">
-                    {c.company} · {c.role}
-                  </div>
-                  {c.error && <div className="mt-1 text-xs text-destructive">{c.error}</div>}
-                  {c.attachment && (
-                    <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-                      <Paperclip aria-hidden="true" className="size-3 shrink-0" />
-                      <span className="truncate">Attachment: {c.attachment.displayName}</span>
+            {rows.map((c) => {
+              const on = !!sel[c.id];
+              const m = mailToView(c);
+              return (
+                <div key={c.id} className={cn("grid items-center gap-3 border-b px-[18px] py-3", COLS, on ? "bg-st-indigo-bg/50" : "bg-card")}>
+                  <button
+                    type="button"
+                    role="checkbox"
+                    aria-checked={on}
+                    aria-label={`Select ${c.email}`}
+                    onClick={() => setSel({ ...sel, [c.id]: !on })}
+                    className={cn(CB, on ? "border-primary bg-primary" : "border-[#c9cbd3] bg-card")}
+                  >
+                    {on && <Check className="size-[11px]" />}
+                  </button>
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span className={cn("grid size-8 shrink-0 place-items-center rounded-full text-xs font-[650] text-white", hueClass(c.company))}>{initials(c.person)}</span>
+                    <div className="min-w-0">
+                      <div className="truncate text-[13.5px] font-[550]">{c.person}</div>
+                      <div className="truncate font-mono text-[11.5px] text-muted-foreground">{c.email}</div>
                     </div>
-                  )}
-                  {resumes.length > 0 && (c.status === "uploaded" || c.status === "scheduled") && !c.messages.some((m) => m.kind === "initial" && m.state !== "scheduled") && (
-                    <ResumePick key={`${c.id}:${c.resumeId ?? ""}`} contact={c} resumes={resumes} onDone={reload} />
-                  )}
-                </TableCell>
-                <TableCell className="max-md:block max-md:px-4 max-md:py-1">
-                  <StatusBadge status={c.status} />
-                  {c.repliedAt && <div className="mt-1 text-xs text-muted-foreground">{formatDateTime(c.repliedAt)}</div>}
-                  {mailToView(c) && (
-                    <Link
-                      href={`/mail/${encodeURIComponent(mailToView(c)!.id)}`}
-                      aria-label={`View mail for ${c.email}`}
-                      className="mt-1 inline-flex items-center gap-1 rounded-sm text-xs font-medium text-accent-text underline-offset-2 hover:underline"
-                    >
-                      <Mail aria-hidden="true" className="size-3" />
-                      View mail
-                    </Link>
-                  )}
-                </TableCell>
-                <TableCell className="max-md:block max-md:px-4 max-md:py-1">
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate text-[13px] font-medium">{c.company}</div>
+                    <div className="truncate text-xs text-muted-foreground">{c.role}</div>
+                  </div>
+                  <div className="min-w-0">
+                    <StatusBadge status={c.status} className="h-auto py-[3px] text-[11.5px] font-semibold" />
+                    {c.error && <div className="mt-1 text-xs text-destructive">{c.error}</div>}
+                  </div>
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <div className="min-w-0 flex-1 text-[12.5px]">
+                      {m ? (
+                        <>
+                          <div className="whitespace-nowrap">{m.kind === "followup" ? "Follow-up" : "First email"} {m.state.replace("_", " ")}</div>
+                          <div className="text-[11.5px] whitespace-nowrap text-muted-foreground">{formatDateTime(m.sentAt ?? m.scheduledFor)}</div>
+                        </>
+                      ) : c.repliedAt ? (
+                        <div className="whitespace-nowrap">Replied {formatDateTime(c.repliedAt)}</div>
+                      ) : (
+                        <div className="text-muted-foreground">Not scheduled yet</div>
+                      )}
+                    </div>
+                    {m && (
+                      <Link
+                        href={`/mail/${encodeURIComponent(m.id)}`}
+                        aria-label={`View mail for ${c.email}`}
+                        className="shrink-0 rounded-md bg-st-indigo-bg px-[9px] py-1 text-xs font-semibold whitespace-nowrap text-st-indigo hover:underline"
+                      >
+                        View
+                      </Link>
+                    )}
+                  </div>
                   <FollowupToggle
                     key={`${c.id}:${c.followupRequested}:${c.followupDelayDays}`}
                     contact={c}
                     disabled={c.status === "replied" || c.status === "opted_out" || c.status === "bounced"}
                     onChange={reload}
                   />
-                </TableCell>
-                <TableCell className="pr-4 max-md:absolute max-md:top-2 max-md:right-2 max-md:p-0">
+                  <div className="min-w-0">
+                    {resumes.length > 0 && (c.status === "uploaded" || c.status === "scheduled") && !c.messages.some((x) => x.kind === "initial" && x.state !== "scheduled") ? (
+                      <ResumePick key={`${c.id}:${c.resumeId ?? ""}`} contact={c} resumes={resumes} onDone={reload} />
+                    ) : null}
+                    {c.attachment && (
+                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <Paperclip aria-hidden="true" className="size-3 shrink-0" />
+                        <span className="truncate">Attachment: {c.attachment.displayName}</span>
+                      </div>
+                    )}
+                  </div>
                   <RowActions contact={c} onDone={reload} />
-                </TableCell>
-              </TableRow>
-            ))}
-            {data && data.contacts.length === 0 && (
-              <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={4} className="py-14 text-center whitespace-normal">
-                  <Users aria-hidden="true" className="mx-auto mb-2 size-5 text-muted-foreground" />
-                  <p className="text-muted-foreground">No contacts match these filters. Clear the search or pick another status.</p>
-                </TableCell>
-              </TableRow>
+                </div>
+              );
+            })}
+            {data && rows.length === 0 && (
+              <div className="py-14 text-center">
+                <Users aria-hidden="true" className="mx-auto mb-2 size-5 text-muted-foreground" />
+                <p className="text-muted-foreground">No contacts match these filters. Clear the search or pick another status.</p>
+              </div>
             )}
-          </TableBody>
-        </Table>
-
-        <nav className="flex items-center justify-between gap-3 border-t px-4 py-2.5" aria-label="Pages">
-          <span className="text-xs text-muted-foreground tabular-nums">{total ? `${from}–${to} of ${total}` : ""}</span>
-          <div className="flex gap-1.5">
-            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-              <ChevronLeft />
-              Previous
-            </Button>
-            <Button variant="outline" size="sm" disabled={page >= lastPage} onClick={() => setPage((p) => p + 1)}>
-              Next
-              <ChevronRight />
-            </Button>
+            <nav className="flex items-center justify-between gap-3 px-[18px] py-[11px]" aria-label="Pages">
+              <span className="text-xs text-muted-foreground tabular-nums">{total ? `Showing ${from}–${to} of ${total} contacts` : ""}</span>
+              <div className="flex gap-1.5">
+                <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+                  <ChevronLeft />
+                  Previous
+                </Button>
+                <Button variant="outline" size="sm" disabled={page >= lastPage} onClick={() => setPage((p) => p + 1)}>
+                  Next
+                  <ChevronRight />
+                </Button>
+              </div>
+            </nav>
           </div>
-        </nav>
-      </div>
+        </div>
+      </PageBody>
     </div>
   );
 }

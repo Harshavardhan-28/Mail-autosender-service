@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type DragEvent, type FormEvent } from "react";
-import { FileText, Loader2, Upload } from "lucide-react";
+import { FileText, Loader2, Pencil, Star, Trash2, Upload } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { api, ApiError } from "@/lib/api";
-import { plural } from "@/lib/format";
+import { formatDay, plural } from "@/lib/format";
 import { checkResumeFile, checkResumeName, defaultNameFor, formatBytes, looksLikePdf } from "@/lib/resumes";
 import type { Resume } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -83,14 +83,14 @@ function UploadForm({ onUploaded }: { onUploaded: () => void }) {
   }
 
   return (
-    <form className="space-y-4" onSubmit={onSubmit} noValidate>
+    <form className="flex h-full flex-col gap-3.5 rounded-[14px] border-2 border-dashed p-[18px]" onSubmit={onSubmit} noValidate>
       <label
         htmlFor="resume-file"
         className={cn(
-          "group flex cursor-pointer flex-col items-center gap-1 rounded-lg border border-dashed px-4 py-6 text-center transition-colors",
+          "group flex cursor-pointer flex-col items-center gap-1 rounded-lg px-4 py-4 text-center transition-colors",
           "hover:border-primary/60 hover:bg-accent/50 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/25",
           dragging && "border-primary bg-accent",
-          file && "border-solid bg-muted/50",
+          file && "bg-muted/50",
         )}
         onDragOver={(e) => {
           e.preventDefault();
@@ -130,7 +130,6 @@ function ResumeItem({ resume, onChanged, onError }: { resume: Resume; onChanged:
   const [nameError, setNameError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const u = resume.usage;
-  const inUse = [u.pendingMessages && plural(u.pendingMessages, "scheduled email"), u.batches && plural(u.batches, "batch", "batches"), u.contacts && plural(u.contacts, "contact")].filter(Boolean) as string[];
 
   async function run(fn: () => Promise<unknown>) {
     setBusy(true);
@@ -155,35 +154,47 @@ function ResumeItem({ resume, onChanged, onError }: { resume: Resume; onChanged:
     void run(() => api.updateResume(resume.id, { displayName: name.trim() }));
   }
 
+  const stat = (label: string, n: number, text: string, first = false) => (
+    <div className={cn("px-3 py-[9px]", !first && "border-l")}>
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-base font-[650]">
+        <span aria-hidden="true">{n}</span>
+        <span className="sr-only">{n ? text : `No ${text.replace(/^\d+ /, "")}`}</span>
+      </div>
+    </div>
+  );
+
   return (
-    <li className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
-      <div className="flex min-w-0 items-start gap-3">
-        <span aria-hidden="true" className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-md border bg-muted text-muted-foreground">
-          <FileText className="size-4" />
+    <li className="flex flex-col gap-3.5 rounded-[14px] border bg-card p-[18px]">
+      <div className="flex items-start gap-3">
+        <span aria-hidden="true" className="grid h-[52px] w-[42px] shrink-0 place-items-center rounded-lg border border-st-red/20 bg-st-red-bg font-mono text-[10px] font-bold text-st-red">
+          PDF
         </span>
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="truncate text-[13px] font-medium">{resume.displayName}</span>
-            {resume.isDefault && <span className="rounded-md bg-st-green-bg px-1.5 py-0.5 text-[11px] font-medium text-st-green">Default</span>}
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[14.5px] font-semibold">{resume.displayName}</div>
+          <div className="truncate font-mono text-[11.5px] text-muted-foreground">
+            {resume.fileName} · {formatBytes(resume.sizeBytes)}
           </div>
-          <div className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
-            <span className="font-mono">{resume.fileName}</span>
-            <span aria-hidden="true">·</span>
-            <span>{formatBytes(resume.sizeBytes)}</span>
-            {inUse.map((t) => (
-              <span key={t} className="before:mr-2 before:content-['·']">
-                {t}
-              </span>
-            ))}
-          </div>
+          <div className="mt-0.5 text-[11.5px] text-muted-foreground">Added {formatDay(resume.createdAt)}</div>
         </div>
+        {resume.isDefault && (
+          <span className="flex items-center gap-1 rounded-full bg-st-indigo-bg px-2 py-[3px] text-[11px] font-semibold whitespace-nowrap text-st-indigo">
+            <Star aria-hidden="true" className="size-[11px]" />
+            Default
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-3 rounded-[10px] border">
+        {stat("Pending mails", u.pendingMessages, plural(u.pendingMessages, "scheduled email"), true)}
+        {stat("Batches", u.batches, plural(u.batches, "batch", "batches"))}
+        {stat("Contacts", u.contacts, plural(u.contacts, "contact"))}
       </div>
       {mode === "rename" ? (
-        <form className="flex w-full flex-wrap items-start gap-2 sm:w-auto" onSubmit={saveName} noValidate>
+        <form className="flex w-full flex-wrap items-start gap-2" onSubmit={saveName} noValidate>
           <label className="sr-only" htmlFor={`rn-${resume.id}`}>
             New name for {resume.displayName}
           </label>
-          <div className="flex-1 sm:w-52">
+          <div className="min-w-0 flex-1">
             <Input id={`rn-${resume.id}`} maxLength={80} value={name} onChange={(e) => setName(e.target.value)} aria-invalid={nameError ? true : undefined} />
             {nameError && <p className="mt-1 text-xs text-destructive">{nameError}</p>}
           </div>
@@ -195,14 +206,20 @@ function ResumeItem({ resume, onChanged, onError }: { resume: Resume; onChanged:
           </Button>
         </form>
       ) : (
-        <div className="flex items-center gap-1">
-          {!resume.isDefault && (
-            <Button variant="ghost" size="sm" disabled={busy} aria-label={`Make ${resume.displayName} the default`} onClick={() => run(() => api.updateResume(resume.id, { isDefault: true }))}>
+        <div className="flex gap-2">
+          {!resume.isDefault ? (
+            <Button variant="outline" size="sm" className="flex-1" disabled={busy} aria-label={`Make ${resume.displayName} the default`} onClick={() => run(() => api.updateResume(resume.id, { isDefault: true }))}>
+              <Star />
               Make default
             </Button>
+          ) : (
+            <span className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border text-[12.5px] font-medium text-muted-foreground">
+              <Star aria-hidden="true" className="size-[13px]" />
+              Attached by default
+            </span>
           )}
           <Button
-            variant="ghost"
+            variant="outline"
             size="sm"
             aria-label={`Rename ${resume.displayName}`}
             onClick={() => {
@@ -211,10 +228,11 @@ function ResumeItem({ resume, onChanged, onError }: { resume: Resume; onChanged:
               setMode("rename");
             }}
           >
+            <Pencil />
             Rename
           </Button>
-          <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" aria-label={`Delete ${resume.displayName}`} onClick={() => setMode("delete")}>
-            Delete
+          <Button variant="outline" size="icon-sm" className="text-st-red hover:text-st-red" aria-label={`Delete ${resume.displayName}`} onClick={() => setMode("delete")}>
+            <Trash2 />
           </Button>
         </div>
       )}
@@ -270,15 +288,22 @@ export function ResumesPanel() {
       {resumes === null ? (
         !error && <p className="text-[13px] text-muted-foreground">Loading…</p>
       ) : resumes.length === 0 ? (
-        <p className="rounded-lg border border-dashed px-4 py-5 text-center text-[13px] text-muted-foreground">No resumes yet. Upload a PDF below; the default one is attached to every email.</p>
+        <div className="space-y-4">
+          <p className="rounded-lg border border-dashed px-4 py-5 text-center text-[13px] text-muted-foreground">No resumes yet. Upload a PDF below; the default one is attached to every email.</p>
+          <div className="max-w-sm">
+            <UploadForm onUploaded={reload} />
+          </div>
+        </div>
       ) : (
-        <ul className="divide-y rounded-lg border">
+        <ul className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
           {resumes.map((r) => (
             <ResumeItem key={r.id} resume={r} onChanged={reload} onError={setError} />
           ))}
+          <li>
+            <UploadForm onUploaded={reload} />
+          </li>
         </ul>
       )}
-      <UploadForm onUploaded={reload} />
     </div>
   );
 }

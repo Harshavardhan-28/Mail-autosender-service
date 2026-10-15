@@ -1,14 +1,13 @@
-import { Send } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-/** The Outbox mark: a small indigo tile with a paper plane. */
+/** The Outbox mark: a small indigo gradient tile with an "O". */
 export function BrandMark({ className }: { className?: string }) {
   return (
     <span
       aria-hidden="true"
-      className={cn("grid size-6 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.2)]", className)}
+      className={cn("grid size-7 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-[#6d78f0] to-[#4f5bd5] text-sm font-bold text-white", className)}
     >
-      <Send className="size-3.5" strokeWidth={2.25} />
+      O
     </span>
   );
 }

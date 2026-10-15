@@ -24,6 +24,8 @@ const SHORT_FIELDS: { key: Exclude<FieldKey, "mailText" | "followupText">; label
 
 type Props = {
   preview: PreviewResult;
+  /** Name typed on the file step; empty = use the suggested name. */
+  initialName?: string;
   saving: boolean;
   /** Save failure to show above the buttons (the edits are kept). */
   error?: React.ReactNode;
@@ -32,8 +34,8 @@ type Props = {
 };
 
 /** Step between choosing a file and saving it: nothing is written until "Save to database". */
-export function ImportReview({ preview, saving, error, onBack, onSave }: Props) {
-  const [name, setName] = useState(preview.suggestedName);
+export function ImportReview({ preview, initialName, saving, error, onBack, onSave }: Props) {
+  const [name, setName] = useState(initialName || preview.suggestedName);
   const [rows, setRows] = useState<ImportRow[]>(preview.rows);
   const [open, setOpen] = useState<Set<number>>(new Set());
 
@@ -58,7 +60,7 @@ export function ImportReview({ preview, saving, error, onBack, onSave }: Props) 
 
   return (
     <div className="space-y-4">
-      <div className="space-y-1.5 rounded-lg border bg-card p-4">
+      <div className="space-y-1.5 rounded-[14px] border bg-card p-4">
         <Label htmlFor="batch-name">Batch name</Label>
         <Input id="batch-name" maxLength={120} value={name} onChange={(e) => setName(e.target.value)} className="max-w-md" />
       </div>
@@ -81,11 +83,25 @@ export function ImportReview({ preview, saving, error, onBack, onSave }: Props) 
         </Notice>
       )}
 
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {[
+          ["Rows found", rows.length + preview.errors.length, ""],
+          ["Ready", rows.length - invalid, "text-st-green"],
+          ["Duplicates", duplicates, "text-st-amber"],
+          ["Errors", invalid + preview.errors.length, "text-st-red"],
+        ].map(([k, v, c]) => (
+          <div key={k} className="rounded-xl border bg-card px-4 py-3.5">
+            <div className="text-xs text-muted-foreground">{k}</div>
+            <div className={cn("text-2xl font-[650]", c)}>{v}</div>
+          </div>
+        ))}
+      </div>
+
       <p role="status" className="text-[13px] text-muted-foreground tabular-nums">
         {rows.length - invalid} {rows.length - invalid === 1 ? "row" : "rows"} ready, {invalid} with problems, {plural(duplicates, "duplicate")}
       </p>
 
-      <div className="rounded-lg border bg-card">
+      <div className="rounded-[14px] border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
