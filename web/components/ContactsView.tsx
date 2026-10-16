@@ -13,6 +13,7 @@ import { useMode } from "./AppShell";
 import { DeleteDialog, deleteContactsCopy } from "./DeleteDialog";
 import { FollowupBulkBar } from "./FollowupBulkBar";
 import { FollowupToggle } from "./FollowupToggle";
+import { DEFAULT_SEND_TZ } from "@/lib/followupDate";
 import { Notice } from "./Notice";
 import { OverdueBanner } from "./OverdueBanner";
 import { PageBody, PageHeader } from "./PageHeader";
@@ -240,6 +241,7 @@ export function ContactsView({ initialBatchId, initialStatus, initialQ, initialC
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
   const [resumes, setResumes] = useState<Resume[]>([]);
+  const [tz, setTz] = useState(DEFAULT_SEND_TZ);
   const [deletingBatch, setDeletingBatch] = useState(false);
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [bulkDeleting, setBulkDeleting] = useState(false);
@@ -251,6 +253,7 @@ export function ContactsView({ initialBatchId, initialStatus, initialQ, initialC
 
   useEffect(() => {
     api.listResumes().then(setResumes, () => {});
+    api.getSendWindow().then((w) => setTz(w?.window?.tz || DEFAULT_SEND_TZ), () => {});
   }, []);
 
   // The company list follows the batch; a picked company the batch does not have is dropped.
@@ -459,7 +462,7 @@ export function ContactsView({ initialBatchId, initialStatus, initialQ, initialC
           })}
         </div>
 
-        {batchId && <FollowupBulkBar key={`${batchId}:${company}`} batchId={batchId} batchName={currentBatch?.name} company={company || undefined} onApplied={reload} />}
+        {batchId && <FollowupBulkBar key={`${batchId}:${company}:${tz}`} batchId={batchId} batchName={currentBatch?.name} company={company || undefined} tz={tz} onApplied={reload} />}
 
         {error && (
           <Notice tone="danger" role="alert">
@@ -574,8 +577,9 @@ export function ContactsView({ initialBatchId, initialStatus, initialQ, initialC
                     )}
                   </div>
                   <FollowupToggle
-                    key={`${c.id}:${c.followupRequested}:${c.followupAt}`}
+                    key={`${c.id}:${c.followupRequested}:${c.followupAt}:${tz}`}
                     contact={c}
+                    tz={tz}
                     disabled={c.status === "replied" || c.status === "opted_out" || c.status === "bounced"}
                     onChange={reload}
                   />

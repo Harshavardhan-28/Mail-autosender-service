@@ -4,7 +4,7 @@ import { useId, useState } from "react";
 import { BellOff, CalendarClock, Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { formatCalendarDay } from "@/lib/format";
-import { describeFollowupError, FOLLOWUP_RANGE_ERROR, followupDateRange, isFollowupDateInRange } from "@/lib/followupDate";
+import { DEFAULT_SEND_TZ, describeFollowupError, FOLLOWUP_RANGE_ERROR, FOLLOWUP_SKIP_REASONS, followupDateRange, isFollowupDateInRange } from "@/lib/followupDate";
 import type { FollowupBulkResult } from "@/lib/types";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -18,14 +18,16 @@ type Props = {
   company?: string;
   /** Called after the server applied the change, so the parent can reload its rows. */
   onApplied: (result: FollowupBulkResult) => void;
+  /** The send window's time zone; the picked date is a calendar day there. */
+  tz?: string;
 };
 
-const resultLine = (r: FollowupBulkResult) => `Updated ${r.updated} of ${r.total}${r.skipped > 0 ? ` · ${r.skipped} skipped (replied, bounced or opted out)` : ""}`;
+const resultLine = (r: FollowupBulkResult) => `Updated ${r.updated} of ${r.total}${r.skipped > 0 ? ` · ${r.skipped} skipped (${FOLLOWUP_SKIP_REASONS})` : ""}`;
 
 /** Sets (or clears) the follow-up date for every contact of a batch, optionally one company, via PUT /api/followups/bulk. */
-export function FollowupBulkBar({ batchId, batchName, company, onApplied }: Props) {
+export function FollowupBulkBar({ batchId, batchName, company, onApplied, tz = DEFAULT_SEND_TZ }: Props) {
   const id = useId();
-  const range = followupDateRange();
+  const range = followupDateRange(new Date(), tz);
   const [date, setDate] = useState(range.fallback);
   const [busy, setBusy] = useState(false);
   const [confirmOff, setConfirmOff] = useState(false);
@@ -60,7 +62,7 @@ export function FollowupBulkBar({ batchId, batchName, company, onApplied }: Prop
           <h2 id={`${id}-h`} className="text-sm font-medium">
             Follow-up for {scope}
           </h2>
-          <p className="text-[13px] text-muted-foreground">Goes out at the send window’s opening on the picked day, never before the first email.</p>
+          <p className="text-[13px] text-muted-foreground">Goes out at the send window’s opening on the picked day. If that is less than a day after a contact’s first email, it goes out after the usual delay instead.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <label>
@@ -91,7 +93,8 @@ export function FollowupBulkBar({ batchId, batchName, company, onApplied }: Prop
           </Button>
         </div>
       </div>
-      {(error || result) && (
+      {/* While the turn-off dialog is open its own copy of the error is the one announced. */}
+      {(error || result) && !confirmOff && (
         <p role={error ? "alert" : "status"} id={error ? `${id}-err` : undefined} className={error ? "mt-2.5 text-xs text-destructive" : "mt-2.5 text-xs text-muted-foreground"}>
           {error ?? result}
         </p>
@@ -101,7 +104,7 @@ export function FollowupBulkBar({ batchId, batchName, company, onApplied }: Prop
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Turn off follow-ups for {scope}?</AlertDialogTitle>
-            <AlertDialogDescription>Follow-ups that have not gone out yet are cancelled. Contacts who replied or bounced are left as they are.</AlertDialogDescription>
+            <AlertDialogDescription>Follow-ups that have not gone out yet are cancelled. Skipped contacts ({FOLLOWUP_SKIP_REASONS}) are left as they are.</AlertDialogDescription>
           </AlertDialogHeader>
           {error && <p className="text-xs text-destructive">{error}</p>}
           <AlertDialogFooter>

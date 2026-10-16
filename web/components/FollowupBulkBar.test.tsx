@@ -41,7 +41,7 @@ describe("FollowupBulkBar", () => {
     const day = plusDays(today(), 10);
     fireEvent.change(screen.getByLabelText("Follow-up date"), { target: { value: day } });
     await userEvent.click(screen.getByRole("button", { name: "Schedule follow-up" }));
-    expect(await screen.findByText("Updated 3 of 5 · 2 skipped (replied, bounced or opted out)")).toBeInTheDocument();
+    expect(await screen.findByText("Updated 3 of 5 · 2 skipped (replied, bounced, opted out, failed or suppressed)")).toBeInTheDocument();
     expect(seen).toHaveLength(1);
     expect(seen[0]).toMatchObject({ url: "/api/followups/bulk", method: "PUT" });
     expect(bodyOf(seen[0]!)).toEqual({ batchId: "b-1", company: "Acme", enabled: true, date: day });
@@ -76,6 +76,31 @@ describe("FollowupBulkBar", () => {
     await userEvent.click(screen.getByRole("button", { name: "Schedule follow-up" }));
     expect(await screen.findByText("date must be today or later")).toBeInTheDocument();
     expect(onApplied).not.toHaveBeenCalled();
+  });
+
+  it("the turn-off dialog names the same skip reasons, and a failure inside it is announced once", async () => {
+    stubFetch(() => json({ error: "Server unavailable" }, 500));
+    render(<FollowupBulkBar batchId="b-1" batchName="Spring" onApplied={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Turn off follow-ups" }));
+    const dlg = await screen.findByRole("alertdialog");
+    expect(within(dlg).getByText(/replied, bounced, opted out, failed or suppressed/)).toBeInTheDocument();
+    await userEvent.click(within(dlg).getByRole("button", { name: "Turn off" }));
+    expect(await within(dlg).findByText("Server unavailable")).toBeInTheDocument();
+    expect(screen.getAllByText("Server unavailable")).toHaveLength(1);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("uses the send window's time zone for today and the bounds", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-17T20:00:00Z")); // 18 Oct in IST, still 17 Oct in Los Angeles
+    try {
+      render(<FollowupBulkBar batchId="b-1" batchName="Spring" tz="America/Los_Angeles" onApplied={vi.fn()} />);
+      const date = screen.getByLabelText("Follow-up date") as HTMLInputElement;
+      expect(date.min).toBe("2026-10-17");
+      expect(date.value).toBe("2026-10-24");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("refuses a date outside the next 90 days without calling the server", async () => {

@@ -215,6 +215,23 @@ describe("ContactsView", () => {
       await vi.waitFor(() => expect(contactCalls(seen).length).toBeGreaterThan(before));
     });
 
+    it("passes the send window's time zone to the follow-up date pickers", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-10-17T20:00:00Z")); // 18 Oct in IST, still 17 Oct in Los Angeles
+      try {
+        serve(
+          () => [{ company: "Acme", count: 3 }],
+          (c) => (c.url === "/api/settings/send-window" ? json({ enforced: true, window: { start: "09:00", end: "10:00", tz: "America/Los_Angeles" } }) : null),
+        );
+        render(<ContactsView initialBatchId="b-1" />);
+        await screen.findByText("Follow-up for all contacts in “Spring”");
+        await vi.waitFor(() => expect((screen.getByLabelText("Follow-up date") as HTMLInputElement).min).toBe("2026-10-17"));
+        await vi.waitFor(() => expect((screen.getByLabelText(/follow-up date for jo@acme.com/i) as HTMLInputElement).min).toBe("2026-10-17"));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("hides the bulk bar when no batch is selected", async () => {
       serve(() => [{ company: "Acme", count: 3 }]);
       render(<ContactsView />);

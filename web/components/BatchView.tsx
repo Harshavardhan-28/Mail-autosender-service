@@ -106,7 +106,7 @@ export function BatchView({ id }: { id: string }) {
         onDeleted={() => router.push("/contacts")}
       />
       <div className="mb-5">
-        <FollowupBulkBar batchId={id} batchName={batch.batch.name} onApplied={reload} />
+        <FollowupBulkBar key={sendWindow?.window?.tz} batchId={id} batchName={batch.batch.name} tz={sendWindow?.window?.tz || undefined} onApplied={reload} />
       </div>
       <BatchScheduler upload={batch} resumes={resumes} sendWindow={sendWindow} reopened />
     </div>
