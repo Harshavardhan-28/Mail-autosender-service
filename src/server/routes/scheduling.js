@@ -28,6 +28,7 @@ const resumeBody = z.strictObject({ resumeId: uuid.nullable() });
 const followupBody = z.strictObject({
   enabled: z.boolean(),
   delayDays: z.number().int().min(1).max(60).optional(),
+  date: z.string().optional(),
 });
 
 const param = (req, label) => {
@@ -98,7 +99,11 @@ export function schedulingRouter({ pool, config = {}, now = () => new Date() }) 
 
   router.put("/contacts/:id/followup", wrap(async (req, res) => {
     const id = param(req, "contact");
-    res.json(await syncFollowup(pool, id, body(followupBody, req)));
+    const b = body(followupBody, req);
+    if (b.date !== undefined && b.delayDays !== undefined) throw new HttpError(400, "Send either date or delayDays, not both");
+    const at = now();
+    const window = b.date === undefined ? undefined : await getSendWindow(pool);
+    res.json(await syncFollowup(pool, id, { ...b, window, now: at }));
   }));
 
   router.delete("/messages/:id", wrap(async (req, res) => {

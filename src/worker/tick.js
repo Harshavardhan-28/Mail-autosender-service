@@ -196,7 +196,7 @@ async function processMessage({ pool, mailer, config, sendTimeoutMs, resumeFetch
             WHERE c.id = $1 AND c.followup_requested AND c.status = 'sent'
               AND NOT EXISTS (SELECT 1 FROM suppressions s WHERE s.email = lower(c.email))
            ON CONFLICT (contact_id, kind) WHERE state <> 'cancelled' DO NOTHING`,
-          [contact.id, followupDueAt(sentAt, contact.followup_delay_days), message.resume_id, message.resume_generation],
+          [contact.id, followupDueAt(sentAt, contact.followup_delay_days, contact.followup_at), message.resume_id, message.resume_generation],
         );
       }
       await client.query("INSERT INTO events(contact_id, type, meta) VALUES ($1, 'sent', $2)", [

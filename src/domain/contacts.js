@@ -16,6 +16,7 @@ export function serializeContact(r) {
     status: r.status,
     followupRequested: r.followup_requested,
     followupDelayDays: r.followup_delay_days,
+    followupAt: r.followup_at ?? null,
     resumeId: r.resume_id ?? null,
     repliedAt: r.replied_at,
     error: r.error,
