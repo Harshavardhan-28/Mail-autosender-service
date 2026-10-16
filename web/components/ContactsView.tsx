@@ -2,15 +2,16 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { CalendarClock, Check, ChevronLeft, ChevronRight, Layers, Loader2, MoreHorizontal, Paperclip, Search, Trash2, UserPlus, Users } from "lucide-react";
+import { Building2, CalendarClock, Check, ChevronLeft, ChevronRight, Layers, Loader2, MoreHorizontal, Paperclip, Search, Trash2, UserPlus, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { api, ApiError } from "@/lib/api";
 import { checkSendTime, toLocalInputValue, MAX_DAYS_AHEAD } from "@/lib/schedule";
 import { formatDateTime, plural, statusLabel } from "@/lib/format";
 import { refusalText } from "@/lib/refusals";
-import { CONTACT_STATUSES, type BatchSummary, type ContactListItem, type ContactStatus, type ContactsPage, type MessageRef, type Resume } from "@/lib/types";
+import { CONTACT_STATUSES, type BatchSummary, type CompanyCount, type ContactListItem, type ContactStatus, type ContactsPage, type MessageRef, type Resume } from "@/lib/types";
 import { useMode } from "./AppShell";
 import { DeleteDialog, deleteContactsCopy } from "./DeleteDialog";
+import { FollowupBulkBar } from "./FollowupBulkBar";
 import { FollowupToggle } from "./FollowupToggle";
 import { Notice } from "./Notice";
 import { OverdueBanner } from "./OverdueBanner";
@@ -224,10 +225,12 @@ function ResumePick({ contact, resumes, onDone }: { contact: ContactListItem; re
   );
 }
 
-export function ContactsView({ initialBatchId, initialStatus, initialQ }: { initialBatchId?: string; initialStatus?: string; initialQ?: string }) {
+export function ContactsView({ initialBatchId, initialStatus, initialQ, initialCompany }: { initialBatchId?: string; initialStatus?: string; initialQ?: string; initialCompany?: string }) {
   const { mode } = useMode();
   const [status, setStatus] = useState<ContactStatus | "">(isStatus(initialStatus) ? initialStatus : "");
   const [batchId, setBatchId] = useState(initialBatchId ?? "");
+  const [company, setCompany] = useState(initialCompany ?? "");
+  const [companies, setCompanies] = useState<CompanyCount[]>([]);
   const [search, setSearch] = useState(initialQ ?? "");
   const [q, setQ] = useState(initialQ ?? "");
   const [page, setPage] = useState(1);
@@ -250,10 +253,27 @@ export function ContactsView({ initialBatchId, initialStatus, initialQ }: { init
     api.listResumes().then(setResumes, () => {});
   }, []);
 
+  // The company list follows the batch; a picked company the batch does not have is dropped.
+  useEffect(() => {
+    let live = true;
+    api.listCompanies(batchId || undefined).then(
+      (list = []) => {
+        if (!live) return;
+        setCompanies(list);
+        // Page 1 already: the batch change that brings a new list resets paging.
+        setCompany((c) => (c ? (list.find((x) => x.company.toLowerCase() === c.toLowerCase())?.company ?? "") : c));
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [batchId, tick]);
+
   useEffect(() => {
     let live = true;
     api
-      .listContacts({ status: status || undefined, q: q || undefined, batchId: batchId || undefined, page, pageSize: PAGE_SIZE })
+      .listContacts({ status: status || undefined, q: q || undefined, batchId: batchId || undefined, company: company || undefined, page, pageSize: PAGE_SIZE })
       .then(
         (d) => {
           if (!live) return;
@@ -266,7 +286,7 @@ export function ContactsView({ initialBatchId, initialStatus, initialQ }: { init
     return () => {
       live = false;
     };
-  }, [status, q, batchId, page, tick]);
+  }, [status, q, batchId, company, page, tick]);
 
   const total = data?.total ?? 0;
   const from = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
@@ -334,6 +354,7 @@ export function ContactsView({ initialBatchId, initialStatus, initialQ }: { init
           onDeleted={() => {
             // Back to the unfiltered list (this view keeps the filter in state, so mirror it in the URL).
             setBatchId("");
+            setCompany("");
             setPage(1);
             window.history.replaceState(null, "", "/contacts");
             reload();
@@ -386,6 +407,27 @@ export function ContactsView({ initialBatchId, initialStatus, initialQ }: { init
               ))}
             </NativeSelect>
           </div>
+          <div className="relative">
+            <Building2 aria-hidden="true" className="pointer-events-none absolute top-1/2 left-3 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <NativeSelect
+              id="f-company"
+              aria-label="Company"
+              className="[&_select]:h-9 [&_select]:bg-card [&_select]:pl-9"
+              value={company}
+              onChange={(e) => {
+                setPage(1);
+                setCompany(e.target.value);
+              }}
+            >
+              <option value="">All companies</option>
+              {companies.map((c) => (
+                <option key={c.company} value={c.company}>
+                  {c.company} ({c.count})
+                </option>
+              ))}
+              {company && !companies.some((c) => c.company === company) && <option value={company}>{company}</option>}
+            </NativeSelect>
+          </div>
           <Button type="submit" variant="outline" className="h-9">
             Search
           </Button>
@@ -416,6 +458,8 @@ export function ContactsView({ initialBatchId, initialStatus, initialQ }: { init
             );
           })}
         </div>
+
+        {batchId && <FollowupBulkBar key={`${batchId}:${company}`} batchId={batchId} batchName={currentBatch?.name} company={company || undefined} onApplied={reload} />}
 
         {error && (
           <Notice tone="danger" role="alert">

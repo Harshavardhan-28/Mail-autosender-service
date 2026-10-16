@@ -7,5 +7,5 @@ const one = (v: string | string[] | undefined) => (typeof v === "string" ? v : u
 
 export default async function ContactsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const sp = await searchParams;
-  return <ContactsView initialBatchId={one(sp.batchId)} initialStatus={one(sp.status)} initialQ={one(sp.q)} />;
+  return <ContactsView initialBatchId={one(sp.batchId)} initialStatus={one(sp.status)} initialQ={one(sp.q)} initialCompany={one(sp.company)} />;
 }

@@ -160,4 +160,35 @@ describe("MailListView", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     expect(mailCalls(seen).length).toBe(2);
   });
+  it("filters by company from a server-side list, back on page 1, and keeps it in the URL", async () => {
+    const seen = stubFetch(
+      (c) =>
+        quiet(c) ??
+        (c.url === "/api/companies"
+          ? json({
+              companies: [
+                { company: "Acme", count: 2 },
+                { company: "Globex", count: 1 },
+              ],
+            })
+          : json(page([mail()], { sent: 60, scheduled: 0, attention: 0 }, 60))),
+    );
+    render(<MailListView initialTab="sent" initialPage={2} />);
+    const select = await screen.findByRole("combobox", { name: "Company" });
+    await screen.findByRole("option", { name: "Acme (2)" });
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["All companies", "Acme (2)", "Globex (1)"]);
+    await userEvent.selectOptions(select, "Acme");
+    await vi.waitFor(() => expect(mailCalls(seen).at(-1)).toBe("/api/mails?state=sent&company=Acme&page=1&pageSize=25"));
+    await vi.waitFor(() => expect(window.location.search).toBe("?tab=sent&company=Acme"));
+    expect(screen.queryByRole("group", { name: "Company" })).toBeNull(); // no client-side chips
+  });
+
+  it("restores the company from the URL value and clears it with the other filters", async () => {
+    const seen = stubFetch((c) => quiet(c) ?? (c.url === "/api/companies" ? json({ companies: [{ company: "Acme", count: 2 }] }) : json(page([]))));
+    render(<MailListView initialTab="sent" initialCompany="Acme" />);
+    expect(await screen.findByText("No mail matches these filters.")).toBeInTheDocument();
+    expect(mailCalls(seen)[0]).toBe("/api/mails?state=sent&company=Acme&page=1&pageSize=25");
+    await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    await vi.waitFor(() => expect(mailCalls(seen).at(-1)).toBe("/api/mails?state=sent&page=1&pageSize=25"));
+  });
 });
