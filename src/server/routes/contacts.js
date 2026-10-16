@@ -10,6 +10,7 @@ const listQuery = z.strictObject({
   status: z.enum(CONTACT_STATUSES).optional(),
   q: z.string().trim().max(200).optional(),
   batchId: uuid.optional(),
+  company: z.string().trim().max(200).optional(),
   page: z.coerce.number().int().min(1).max(100000).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(25),
 });
@@ -29,12 +30,13 @@ export function contactsRouter({ pool, config = {} }) {
     try {
       const parsed = listQuery.safeParse(req.query);
       if (!parsed.success) throw new HttpError(400, "Invalid query parameters");
-      const { status, q, batchId, page, pageSize } = parsed.data;
+      const { status, q, batchId, company, page, pageSize } = parsed.data;
       const where = [];
       const params = [];
       const add = (v) => (params.push(v), `$${params.length}`);
       if (status) where.push(`status = ${add(status)}`);
       if (batchId) where.push(`batch_id = ${add(batchId)}`);
+      if (company) where.push(`lower(company) = lower(${add(company)})`);
       if (q) {
         const p = add(`%${escapeLike(q)}%`);
         where.push(`(company ILIKE ${p} OR role ILIKE ${p} OR person ILIKE ${p} OR email ILIKE ${p} OR subject ILIKE ${p})`);
@@ -114,5 +116,29 @@ export function contactsRouter({ pool, config = {} }) {
     }
   });
 
+  return router;
+}
+
+const companiesQuery = z.strictObject({ batchId: uuid.optional() });
+
+// Mounted at /api/companies (behind the global auth guard). Case-folded distinct companies with counts.
+export function companiesRouter({ pool }) {
+  const router = Router();
+  router.get("/", async (req, res, next) => {
+    try {
+      const parsed = companiesQuery.safeParse(req.query);
+      if (!parsed.success) throw new HttpError(400, "Invalid query parameters");
+      const { batchId } = parsed.data;
+      const { rows } = await pool.query(
+        `SELECT min(company) AS company, count(*)::int AS count FROM contacts
+          WHERE btrim(coalesce(company, '')) <> '' AND ($1::uuid IS NULL OR batch_id = $1::uuid)
+          GROUP BY lower(company) ORDER BY lower(company), min(company)`,
+        [batchId ?? null],
+      );
+      res.json({ companies: rows });
+    } catch (err) {
+      next(err);
+    }
+  });
   return router;
 }
