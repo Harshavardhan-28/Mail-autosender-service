@@ -16,7 +16,7 @@ const conflict = (n: number, email: string, replaceable = true): ImportConflict 
 
 const contact = (id: string, r: ImportRow): UploadedContact => ({
   row: r.row, id, batchId: "b-1", company: r.company, role: r.role, person: r.person, email: r.email, subject: r.subject, mailText: r.mailText, followupText: null,
-  status: "uploaded", followupRequested: false, followupDelayDays: 7, repliedAt: null, error: null, createdAt: "2030-01-01T00:00:00Z", preview: { subject: r.subject, text: r.mailText },
+  status: "uploaded", followupRequested: false, followupDelayDays: 7, followupAt: null, repliedAt: null, error: null, createdAt: "2030-01-01T00:00:00Z", preview: { subject: r.subject, text: r.mailText },
 });
 
 const batch = { id: "b-1", name: "Leads", originalFilename: "leads.csv", createdAt: "2030-01-01T00:00:00Z" };

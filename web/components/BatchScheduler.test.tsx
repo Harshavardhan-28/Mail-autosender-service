@@ -21,6 +21,7 @@ const contact = (id: string, email: string, text = "Hi there", row = Number(id.r
   status: "uploaded",
   followupRequested: false,
   followupDelayDays: 7,
+  followupAt: null,
   repliedAt: null,
   error: null,
   createdAt: "2030-01-01T00:00:00Z",

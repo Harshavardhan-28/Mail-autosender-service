@@ -39,6 +39,8 @@ export interface Contact {
   status: ContactStatus;
   followupRequested: boolean;
   followupDelayDays: number;
+  /** Chosen follow-up instant (09:00 IST of the picked date); null = legacy sent_at + delay rule. */
+  followupAt: string | null;
   repliedAt: string | null;
   error: string | null;
   /** Per-contact resume override; null/absent means batch or default. */
@@ -230,6 +232,8 @@ export interface ContactsQuery {
   status?: ContactStatus;
   q?: string;
   batchId?: string;
+  /** Exact, case-insensitive company match. */
+  company?: string;
   page?: number;
   pageSize?: number;
 }
@@ -250,6 +254,17 @@ export interface SendWindow {
 export interface SendWindowInfo {
   enforced: boolean;
   window: SendWindow;
+}
+
+export interface CompanyCount {
+  company: string;
+  count: number;
+}
+
+export interface FollowupBulkResult {
+  updated: number;
+  skipped: number;
+  total: number;
 }
 
 export interface FollowupResult {
@@ -361,6 +376,8 @@ export interface MailsQuery {
   kind?: MessageKind;
   q?: string;
   batchId?: string;
+  /** Exact, case-insensitive company match. */
+  company?: string;
   page?: number;
   pageSize?: number;
 }

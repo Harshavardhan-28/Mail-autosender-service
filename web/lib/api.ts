@@ -16,6 +16,8 @@ import type {
   MailDetail,
   MailsPage,
   MailsQuery,
+  CompanyCount,
+  FollowupBulkResult,
   FollowupResult,
   FollowupTemplate,
   ImportConflict,
@@ -227,6 +229,10 @@ export function createApi(options: ApiOptions = {}) {
       const qs = params.toString();
       return request("GET", `/api/mails${qs ? `?${qs}` : ""}`);
     },
+    async listCompanies(batchId?: string): Promise<CompanyCount[]> {
+      const qs = batchId ? `?batchId=${encodeURIComponent(batchId)}` : "";
+      return (await request<{ companies: CompanyCount[] }>("GET", `/api/companies${qs}`)).companies;
+    },
     async getMail(id: string): Promise<MailDetail> {
       return (await request<{ mail: MailDetail }>("GET", `/api/mails/${seg(id)}`)).mail;
     },
@@ -281,7 +287,7 @@ export function createApi(options: ApiOptions = {}) {
     async deleteResume(id: string): Promise<void> {
       await request("DELETE", `/api/resumes/${seg(id)}`);
     },
-    setFollowup(contactId: string, body: { enabled: boolean; delayDays?: number }): Promise<FollowupResult> {
+    setFollowup(contactId: string, body: { enabled: boolean; date?: string }): Promise<FollowupResult> {
       return request("PUT", `/api/contacts/${seg(contactId)}/followup`, { json: body });
     },
     getOverdue(): Promise<OverdueList> {
@@ -299,6 +305,10 @@ export function createApi(options: ApiOptions = {}) {
     },
 
     // Template, dashboard, sweep
+    /** Sets or clears the follow-up for a whole batch (optionally one company). `date` is YYYY-MM-DD; required when enabling, forbidden when disabling. */
+    setFollowupBulk(body: { batchId: string; company?: string; enabled: boolean; date?: string }): Promise<FollowupBulkResult> {
+      return request("PUT", "/api/followups/bulk", { json: body });
+    },
     async getFollowupTemplate(): Promise<FollowupTemplate> {
       return (await request<{ template: FollowupTemplate }>("GET", "/api/template/followup")).template;
     },

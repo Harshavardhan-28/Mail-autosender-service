@@ -22,6 +22,7 @@ const contact = (id: string, status: ContactWithPreview["status"]): ContactWithP
   status,
   followupRequested: false,
   followupDelayDays: 7,
+  followupAt: null,
   repliedAt: null,
   error: null,
   createdAt: "2030-01-01T00:00:00Z",

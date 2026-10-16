@@ -530,7 +530,7 @@ export function ContactsView({ initialBatchId, initialStatus, initialQ }: { init
                     )}
                   </div>
                   <FollowupToggle
-                    key={`${c.id}:${c.followupRequested}:${c.followupDelayDays}`}
+                    key={`${c.id}:${c.followupRequested}:${c.followupAt}`}
                     contact={c}
                     disabled={c.status === "replied" || c.status === "opted_out" || c.status === "bounced"}
                     onChange={reload}
