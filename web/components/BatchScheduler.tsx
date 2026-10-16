@@ -294,7 +294,7 @@ export function BatchScheduler({ upload, resumes = [], sendWindow = null, now = 
                         <StatusBadge status={st} />
                       </TableCell>
                       <TableCell className="max-md:block max-md:px-4 max-md:py-1">
-                        <FollowupToggle contact={c} disabled={r.blocked} />
+                        <FollowupToggle key={`${c.id}:${c.followupRequested}:${c.followupAt}`} contact={c} disabled={r.blocked} />
                       </TableCell>
                       <TableCell className="pr-4 max-md:block max-md:px-4 max-md:py-1">
                         {scheduledAt[c.id] ? (

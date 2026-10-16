@@ -1,7 +1,8 @@
 // Display helpers. Everything renders in the browser's local time zone.
 
 const dateTime = new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-const dayPart = new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short" });
+const DAY = { weekday: "short", day: "numeric", month: "short" } as const;
+const dayPart = new Intl.DateTimeFormat(undefined, DAY);
 const timePart = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
 
 const short = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -22,6 +23,13 @@ export function formatShort(v: string | Date): string {
 
 export function formatDay(v: string | Date): string {
   return dayPart.format(toDate(v));
+}
+
+const calendarDay = new Intl.DateTimeFormat(undefined, { ...DAY, timeZone: "UTC" });
+
+/** "Fri, 24 Oct" for a bare calendar date (YYYY-MM-DD), the same day wherever the browser is. */
+export function formatCalendarDay(iso: string): string {
+  return calendarDay.format(new Date(`${iso}T00:00:00Z`));
 }
 
 export function formatTime(v: string | Date): string {

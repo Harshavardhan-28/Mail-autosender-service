@@ -1,39 +1,18 @@
 "use client";
 
 import { useId, useState } from "react";
-import { api, ApiError } from "@/lib/api";
-import { refusalText } from "@/lib/refusals";
+import { api } from "@/lib/api";
+import { formatCalendarDay } from "@/lib/format";
+import { describeFollowupError, FOLLOWUP_RANGE_ERROR, followupDateRange, isFollowupDateInRange, istDate } from "@/lib/followupDate";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import type { Contact, FollowupResult } from "@/lib/types";
-
-const MAX_DAYS = 90; // same cap the server enforces
-const DEFAULT_DAYS = 7;
-const SEND_TZ = "Asia/Kolkata"; // send-window tz: the picked date is a calendar day here
-
-const istDay = new Intl.DateTimeFormat("en-CA", { timeZone: SEND_TZ, year: "numeric", month: "2-digit", day: "2-digit" });
-const dayLabel = new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
-
-const addDays = (iso: string, n: number) => {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
-};
 
 type Props = {
   contact: Pick<Contact, "id" | "email" | "followupRequested" | "followupAt">;
   onChange?: (result: FollowupResult) => void;
   disabled?: boolean;
 };
-
-function describe(err: unknown): string {
-  if (err instanceof ApiError) {
-    const r = err.refused?.[0];
-    if (r) return refusalText(r.reason);
-    return err.message;
-  }
-  return "Could not update the follow-up";
-}
 
 /**
  * Follow-up switch + calendar date (IST). Saves immediately via PUT /api/contacts/:id/followup.
@@ -42,17 +21,16 @@ function describe(err: unknown): string {
 export function FollowupToggle({ contact, onChange, disabled }: Props) {
   const id = useId();
   const [enabled, setEnabled] = useState(contact.followupRequested);
-  const today = istDay.format(new Date());
-  const min = today;
-  const max = addDays(today, MAX_DAYS);
-  const initial = contact.followupAt ? istDay.format(new Date(contact.followupAt)) : addDays(today, DEFAULT_DAYS);
+  const range = followupDateRange();
+  const { min, max } = range;
+  const initial = contact.followupAt ? istDate(contact.followupAt) : range.fallback;
   const [date, setDate] = useState(initial);
   const [savedDate, setSavedDate] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const validDate = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= min && d <= max;
-  const rangeError = "Pick a date within the next 90 days";
+  const validDate = (d: string) => isFollowupDateInRange(d, range);
+  const rangeError = FOLLOWUP_RANGE_ERROR;
 
   async function save(next: boolean, d: string) {
     const before = enabled;
@@ -63,14 +41,14 @@ export function FollowupToggle({ contact, onChange, disabled }: Props) {
       const result = await api.setFollowup(contact.id, next ? { enabled: true, date: d } : { enabled: false });
       setEnabled(result.contact.followupRequested);
       if (result.contact.followupAt) {
-        const saved = istDay.format(new Date(result.contact.followupAt));
+        const saved = istDate(result.contact.followupAt);
         setSavedDate(saved);
         setDate(saved);
       }
       onChange?.(result);
     } catch (err) {
       setEnabled(before);
-      setError(describe(err));
+      setError(describeFollowupError(err));
     } finally {
       setBusy(false);
     }
@@ -112,7 +90,7 @@ export function FollowupToggle({ contact, onChange, disabled }: Props) {
           />
         </label>
         {enabled && validDate(savedDate) && (
-          <span className="text-xs text-muted-foreground">Sends {dayLabel.format(new Date(`${savedDate}T00:00:00Z`))}</span>
+          <span className="text-xs text-muted-foreground">Sends {formatCalendarDay(savedDate)}</span>
         )}
       </div>
       {error && (

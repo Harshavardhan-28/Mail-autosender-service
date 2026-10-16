@@ -77,4 +77,24 @@ describe("BatchView", () => {
     await vi.waitFor(() => expect(push).toHaveBeenCalledWith("/contacts"));
     expect(seen.find((c) => c.method === "DELETE")!.url).toBe("/api/batches/b-1");
   });
+  it("offers the bulk follow-up for the whole batch and refreshes the rows' follow-up dates after applying", async () => {
+    let fu: string | null = null;
+    const seen = stubFetch((c) => {
+      if (c.method === "PUT" && c.url === "/api/followups/bulk") {
+        fu = "2030-03-05T03:30:00.000Z"; // 09:00 IST
+        return json({ updated: 1, skipped: 0, total: 1 });
+      }
+      if (c.url === "/api/batches/b-1")
+        return json({ batch: { id: "b-1", name: "Spring", originalFilename: null, createdAt: "2030-01-01T00:00:00Z" }, contacts: [{ ...contact("a", "uploaded"), followupRequested: fu !== null, followupAt: fu }] });
+      if (c.url === "/api/resumes") return json({ resumes: [] });
+      return json({ enforced: false });
+    });
+    render(<BatchView id="b-1" />);
+    expect(await screen.findByText("Follow-up for all contacts in “Spring”")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Schedule follow-up" }));
+    expect(await screen.findByText("Updated 1 of 1")).toBeInTheDocument();
+    expect(JSON.parse(String(seen.find((c) => c.method === "PUT")!.body))).toMatchObject({ batchId: "b-1", enabled: true });
+    await vi.waitFor(() => expect(screen.getByLabelText(/follow-up date for a@acme.com/i)).toHaveValue("2030-03-05"));
+    expect(screen.getByRole("switch", { name: /follow up with a@acme.com/i })).toBeChecked();
+  });
 });
