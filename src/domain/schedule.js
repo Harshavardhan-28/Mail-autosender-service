@@ -388,6 +388,31 @@ export async function syncFollowup(pool, contactId, { enabled, delayDays, date, 
   }
 }
 
+// Applies syncFollowup to every contact of a batch (optionally one company, exact case-insensitive).
+// A contact syncFollowup refuses (replied, bounced, suppressed, ...) is skipped; anything else fails the request.
+export async function setFollowupBulk(pool, { batchId, company, enabled, date, window, now = new Date() }) {
+  if (enabled && date === undefined) throw bad("date is required to enable follow-ups");
+  if (!enabled && date !== undefined) throw bad("date is only allowed when enabling follow-ups");
+  if (enabled) followupInstant(date, window, now); // reject a bad date before any write
+  if (!(await pool.query("SELECT 1 FROM batches WHERE id = $1", [batchId])).rowCount) throw new HttpError(404, "Batch not found");
+  const { rows } = await pool.query(
+    "SELECT id FROM contacts WHERE batch_id = $1 AND ($2::text IS NULL OR lower(company) = lower($2)) ORDER BY created_at, id",
+    [batchId, company ?? null],
+  );
+  let updated = 0;
+  let skipped = 0;
+  for (const { id } of rows) {
+    try {
+      await syncFollowup(pool, id, { enabled, date, window, now });
+      updated++;
+    } catch (err) {
+      if (!(err instanceof RefusedError)) throw err;
+      skipped++;
+    }
+  }
+  return { updated, skipped, total: rows.length };
+}
+
 // Scheduled messages whose time passed more than OVERDUE_MINUTES ago (window closed, pacing/cap did not fit them).
 export async function listOverdue(pool, now = new Date()) {
   const cutoff = new Date(now.getTime() - OVERDUE_MINUTES * 60_000);
