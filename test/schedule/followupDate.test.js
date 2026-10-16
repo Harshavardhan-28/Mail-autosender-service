@@ -33,8 +33,13 @@ async function sentContact(sentAt = new Date(Date.now() - 2 * D)) {
 test("followupInstant: a date maps to the window opening on that local day", () => {
   const now = new Date("2026-10-17T12:00:00Z");
   assert.equal(followupInstant("2026-10-20", DEFAULT_SEND_WINDOW, now).toISOString(), "2026-10-20T03:30:00.000Z");
-  // today (in the window tz) is allowed, even after the window opened
-  assert.equal(followupInstant("2026-10-17", DEFAULT_SEND_WINDOW, now).toISOString(), "2026-10-17T03:30:00.000Z");
+  // today (in the window tz) is allowed; once today's opening has passed it moves to the next send-window opening
+  assert.equal(followupInstant("2026-10-17", DEFAULT_SEND_WINDOW, now).toISOString(), "2026-10-18T03:30:00.000Z");
+  // inside today's window: now itself (sendable at once, never in the past)
+  const inWindow = new Date("2026-10-17T04:00:00Z");
+  assert.equal(followupInstant("2026-10-17", DEFAULT_SEND_WINDOW, inWindow).toISOString(), inWindow.toISOString());
+  // before today's opening: today's opening
+  assert.equal(followupInstant("2026-10-17", DEFAULT_SEND_WINDOW, new Date("2026-10-17T01:00:00Z")).toISOString(), "2026-10-17T03:30:00.000Z");
 });
 
 test("followupInstant: rejects malformed, impossible, past and >90-day dates", () => {
@@ -46,10 +51,14 @@ test("followupInstant: rejects malformed, impossible, past and >90-day dates", (
   assert.throws(() => followupInstant("2026-10-16", DEFAULT_SEND_WINDOW, new Date("2026-10-16T19:00:00Z")), { status: 400 });
 });
 
-test("followupDueAt: a picked instant wins but never precedes the first send", () => {
+test("followupDueAt: a picked instant at least a day after the first send wins; otherwise sent_at + delay", () => {
   const sent = new Date("2026-10-10T04:00:00Z");
   assert.equal(followupDueAt(sent, 7, new Date("2026-10-20T03:30:00Z")).toISOString(), "2026-10-20T03:30:00.000Z");
-  assert.equal(followupDueAt(sent, 7, new Date("2026-10-01T03:30:00Z")).toISOString(), sent.toISOString());
+  // exactly 24h after the send still counts
+  assert.equal(followupDueAt(sent, 7, new Date(sent.getTime() + D)).getTime(), sent.getTime() + D);
+  // picked instant before the send, or less than a day after it: falls back to the delay
+  assert.equal(followupDueAt(sent, 7, new Date("2026-10-01T03:30:00Z")).getTime(), sent.getTime() + 7 * D);
+  assert.equal(followupDueAt(sent, 7, new Date(sent.getTime() + D - 60_000)).getTime(), sent.getTime() + 7 * D);
   assert.equal(followupDueAt(sent, 7, null).getTime(), sent.getTime() + 7 * D);
 });
 
@@ -87,7 +96,7 @@ test("PUT followup: bad date, past date, or date together with delayDays is 400"
   assert.equal((await msgs(id)).length, 0);
 });
 
-test("a date set before the first mail is sent is used when the worker sends it", async () => {
+test("a date set before the first mail is sent is stored with no follow-up yet, and is the due time for a send before it", async () => {
   const { contacts } = await seedBatch(t.pool, [em()]);
   const id = contacts[0].id;
   const day = istDay(6);

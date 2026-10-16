@@ -296,6 +296,7 @@ export async function resolveMessage(pool, messageId, action, now = new Date()) 
 }
 
 // A picked calendar date -> the send-window opening on that day in the window's tz. Today (in that tz) or later, <= 90 days out.
+// Today after its opening has passed -> the next moment sending is allowed (now inside the window, else the next opening).
 export function followupInstant(dateStr, window, now = new Date()) {
   const m = typeof dateStr === "string" ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr) : null;
   if (!m) throw bad("date must be YYYY-MM-DD");
@@ -305,15 +306,18 @@ export function followupInstant(dateStr, window, now = new Date()) {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: window.tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
   if (dateStr < today) throw bad("date must be today or later");
   const [sh, sm] = window.start.split(":").map(Number);
-  const at = zonedInstant(window.tz, y, mo, d, sh, sm);
+  const opening = zonedInstant(window.tz, y, mo, d, sh, sm);
+  const at = opening.getTime() < now.getTime() ? nextWindowOpen(window, now) : opening;
   if (at.getTime() > now.getTime() + MAX_DAYS_AHEAD * DAY_MS) throw bad(`date must be within ${MAX_DAYS_AHEAD} days`);
   return at;
 }
 
-// A picked instant wins over sent_at + delay, but a follow-up never precedes the first send.
+// A picked instant wins when it is at least a day after the first send; otherwise (none picked, or a date on/before
+// the send day) the follow-up goes at sent_at + delay, so it never lands minutes after the initial.
 export const followupDueAt = (sentAt, delayDays, followupAt = null) => {
   const sent = new Date(sentAt).getTime();
-  return new Date(followupAt ? Math.max(new Date(followupAt).getTime(), sent) : sent + delayDays * DAY_MS);
+  const picked = followupAt ? new Date(followupAt).getTime() : null;
+  return new Date(picked !== null && picked >= sent + DAY_MS ? picked : sent + delayDays * DAY_MS);
 };
 
 // Follow-up checkbox. See the API section of the plan.
@@ -396,7 +400,7 @@ export async function setFollowupBulk(pool, { batchId, company, enabled, date, w
   if (enabled) followupInstant(date, window, now); // reject a bad date before any write
   if (!(await pool.query("SELECT 1 FROM batches WHERE id = $1", [batchId])).rowCount) throw new HttpError(404, "Batch not found");
   const { rows } = await pool.query(
-    "SELECT id FROM contacts WHERE batch_id = $1 AND ($2::text IS NULL OR lower(company) = lower($2)) ORDER BY created_at, id",
+    "SELECT id FROM contacts WHERE batch_id = $1 AND ($2::text IS NULL OR lower(btrim(company)) = lower($2)) ORDER BY created_at, id",
     [batchId, company ?? null],
   );
   let updated = 0;

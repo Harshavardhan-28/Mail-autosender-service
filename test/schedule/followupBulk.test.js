@@ -101,6 +101,39 @@ test("bad or past date is a 400 with no writes; enabled needs date; disabled for
   assert.equal((await contact(ids[0])).followup_at, null);
 });
 
+test("unsent contacts: the date is stored with no follow-up message yet", async () => {
+  const { batchId, contacts } = await seedBatch(t.pool, [`fb${++n}_u@example.com`]);
+  const id = contacts[0].id;
+  const day = istDay(6);
+  const r = await put({ batchId, enabled: true, date: day });
+  assert.deepEqual(r.json, { updated: 1, skipped: 0, total: 1 });
+  const row = await contact(id);
+  assert.equal(row.followup_requested, true);
+  assert.equal(row.followup_at.getTime(), opening(day));
+  assert.equal((await followups(id)).length, 0);
+});
+
+test("re-applying with a new date moves the existing scheduled follow-up (no duplicate row)", async () => {
+  const { batchId, ids } = await sentBatch([{}]);
+  await put({ batchId, enabled: true, date: istDay(3) });
+  const [first] = await followups(ids[0]);
+  const later = istDay(8);
+  const r = await put({ batchId, enabled: true, date: later });
+  assert.deepEqual(r.json, { updated: 1, skipped: 0, total: 1 });
+  const f = await followups(ids[0]);
+  assert.equal(f.length, 1);
+  assert.equal(f[0].id, first.id);
+  assert.equal(f[0].scheduled_for.getTime(), opening(later));
+  assert.equal((await contact(ids[0])).followup_at.getTime(), opening(later));
+});
+
+test("company filter ignores surrounding whitespace stored on the contact", async () => {
+  const { batchId, ids } = await sentBatch([{ company: "  Spaced Co " }, { company: "Spaced Co" }, { company: "Other" }]);
+  const r = await put({ batchId, company: "spaced co", enabled: true, date: istDay(3) });
+  assert.deepEqual(r.json, { updated: 2, skipped: 0, total: 2 });
+  assert.equal((await followups(ids[2])).length, 0);
+});
+
 test("unknown batch is 404", async () => {
   assert.equal((await put({ batchId: "00000000-0000-4000-8000-000000000000", enabled: false })).status, 404);
 });

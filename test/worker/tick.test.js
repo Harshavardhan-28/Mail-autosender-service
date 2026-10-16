@@ -370,6 +370,16 @@ test("follow-up with a picked date: created at that instant when the initial is 
   assert.equal(fu[0].scheduled_for.getTime(), at.getTime());
 });
 
+test("follow-up with a picked date earlier than a day after the send: created at sent_at + delay, not minutes after the initial", async () => {
+  const nowDate = new Date();
+  const { contact } = await dueInitial({ followup_requested: true, followup_delay_days: 5 });
+  await pool.query("update contacts set followup_at=$2 where id=$1", [contact.id, new Date(nowDate.getTime() - D)]);
+  await tick({ now: () => nowDate });
+  const fu = (await pool.query("select * from messages where contact_id=$1 and kind='followup'", [contact.id])).rows;
+  assert.equal(fu.length, 1);
+  assert.equal(fu[0].scheduled_for.getTime(), nowDate.getTime() + 5 * D);
+});
+
 test("no follow-up is created when it was not requested", async () => {
   const { contact } = await dueInitial();
   await tick();

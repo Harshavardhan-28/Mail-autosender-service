@@ -36,7 +36,7 @@ export function contactsRouter({ pool, config = {} }) {
       const add = (v) => (params.push(v), `$${params.length}`);
       if (status) where.push(`status = ${add(status)}`);
       if (batchId) where.push(`batch_id = ${add(batchId)}`);
-      if (company) where.push(`lower(company) = lower(${add(company)})`);
+      if (company) where.push(`lower(btrim(company)) = lower(${add(company)})`);
       if (q) {
         const p = add(`%${escapeLike(q)}%`);
         where.push(`(company ILIKE ${p} OR role ILIKE ${p} OR person ILIKE ${p} OR email ILIKE ${p} OR subject ILIKE ${p})`);
@@ -130,9 +130,9 @@ export function companiesRouter({ pool }) {
       if (!parsed.success) throw new HttpError(400, "Invalid query parameters");
       const { batchId } = parsed.data;
       const { rows } = await pool.query(
-        `SELECT min(company) AS company, count(*)::int AS count FROM contacts
+        `SELECT min(btrim(company)) AS company, count(*)::int AS count FROM contacts
           WHERE btrim(coalesce(company, '')) <> '' AND ($1::uuid IS NULL OR batch_id = $1::uuid)
-          GROUP BY lower(company) ORDER BY lower(company), min(company)`,
+          GROUP BY lower(btrim(company)) ORDER BY lower(btrim(company)), min(btrim(company))`,
         [batchId ?? null],
       );
       res.json({ companies: rows });

@@ -53,7 +53,7 @@ export async function listMails(pool, { state = "all", kind, q, batchId, company
   const where = [`m.state = ANY(${add(STATE_GROUPS[state] ?? LIVE_STATES)}::text[])`];
   if (kind) where.push(`m.kind = ${add(kind)}`);
   if (batchId) where.push(`c.batch_id = ${add(batchId)}`);
-  if (company) where.push(`lower(c.company) = lower(${add(company)})`);
+  if (company) where.push(`lower(btrim(c.company)) = lower(${add(company)})`);
   if (q) {
     const p = add(`%${escapeLike(q)}%`);
     where.push(`(c.company ILIKE ${p} OR c.person ILIKE ${p} OR c.email ILIKE ${p} OR c.subject ILIKE ${p})`);

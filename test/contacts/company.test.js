@@ -60,3 +60,17 @@ test("companies: distinct names (case-folded) with counts, optionally per batch"
 test("companies requires auth", async () => {
   assert.equal((await t.client().raw("GET", "/api/companies")).status, 401);
 });
+
+test("company names are trimmed: /api/companies groups them and the filters match them", async () => {
+  const b3 = await seedBatch(t.pool, ["t1@co.example.com", "t2@co.example.com"], {
+    name: "three",
+    overrides: { "t1@co.example.com": { company: "  Trim Co " }, "t2@co.example.com": { company: "trim co" } },
+  });
+  for (const x of b3.contacts) await addMessage(t.pool, x.id, { scheduledFor: new Date(Date.now() + 3_600_000) });
+  const list = await c.get(`/api/companies?batchId=${b3.batchId}`);
+  assert.deepEqual(list.json.companies, [{ company: "Trim Co", count: 2 }]);
+  const cs = await c.get(`/api/contacts?company=Trim%20Co&batchId=${b3.batchId}`);
+  assert.deepEqual(emails(cs.json.contacts), ["t1@co.example.com", "t2@co.example.com"]);
+  const ms = await c.get(`/api/mails?company=trim%20co&batchId=${b3.batchId}&state=all`);
+  assert.deepEqual(emails(ms.json.mails), ["t1@co.example.com", "t2@co.example.com"]);
+});
