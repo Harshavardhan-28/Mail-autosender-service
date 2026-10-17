@@ -9,12 +9,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-// Same rule as the server: a typed .pdf is dropped; letters, digits, spaces and . _ - ( ) only.
+// Same rule as the server: a typed .pdf is dropped; letters (with combining marks), digits, spaces and . _ - ( ) only.
 function check(raw: string): { name: string; error?: string } {
   const name = raw.trim().replace(/\.pdf$/i, "").trim();
   if (!name) return { name, error: "Enter a file name." };
   if (name.length > 100) return { name, error: "At most 100 characters." };
-  if (!/^[\p{L}\p{N} ._()-]+$/u.test(name)) return { name, error: "Use letters, digits, spaces and . _ - ( ) only." };
+  if (!/^[\p{L}\p{M}\p{N} ._()-]+$/u.test(name)) return { name, error: "Use letters, digits, spaces and . _ - ( ) only." };
   return { name };
 }
 
@@ -71,7 +71,8 @@ export function AttachmentNameForm() {
             <Paperclip aria-hidden="true" className="size-3" />
             {info.fileName}
           </span>
-          {info.isDefault && " (default, from your sender name)"}.
+          {info.source === "sender_name" && " (default, from your sender name)"}
+          {info.source === "fallback" && " (default: no sender name is set on this server, so type your own name and Save)"}.
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-2">

@@ -8,7 +8,7 @@ import { resetApiState } from "@/lib/api";
 beforeEach(() => resetApiState());
 afterEach(() => vi.unstubAllGlobals());
 
-const info = (name: string, isDefault = false) => ({ name, fileName: `${name}.pdf`, isDefault });
+const info = (name: string, isDefault = false, source: "saved" | "sender_name" | "fallback" = isDefault ? "sender_name" : "saved") => ({ name, fileName: `${name}.pdf`, isDefault, source });
 
 describe("AttachmentNameForm", () => {
   it("shows the current name and what attachments are sent as", async () => {
@@ -16,6 +16,30 @@ describe("AttachmentNameForm", () => {
     render(<AttachmentNameForm />);
     expect(await screen.findByDisplayValue("Harshavardhan_Khamkar_Resume")).toBeInTheDocument();
     expect(screen.getByText(/Harshavardhan_Khamkar_Resume\.pdf/)).toBeInTheDocument();
+  });
+
+  it("says the default comes from the sender name only when there is one", async () => {
+    stubFetch(() => json(info("Harshavardhan_Khamkar_Resume", true, "sender_name")));
+    const { unmount } = render(<AttachmentNameForm />);
+    expect(await screen.findByText(/from your sender name/)).toBeInTheDocument();
+    unmount();
+    vi.unstubAllGlobals();
+    resetApiState();
+    stubFetch(() => json(info("Resume", true, "fallback")));
+    render(<AttachmentNameForm />);
+    expect(await screen.findByText(/no sender name is set/i)).toBeInTheDocument();
+    expect(screen.queryByText(/from your sender name/)).toBeNull();
+  });
+
+  it("accepts names in Indian scripts and with accents", async () => {
+    const seen = stubFetch((c) => (c.method === "PUT" ? json(info("हर्ष_Résumé")) : json(info("Resume", true, "fallback"))));
+    render(<AttachmentNameForm />);
+    const input = await screen.findByLabelText("File name in emails");
+    await userEvent.clear(input);
+    await userEvent.type(input, "हर्ष_Résumé");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Saved. Resumes are sent as हर्ष_Résumé.pdf.")).toBeInTheDocument();
+    expect(seen.some((c) => c.method === "PUT")).toBe(true);
   });
 
   it("saves a new name with PUT and shows the saved file name", async () => {
