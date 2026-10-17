@@ -18,11 +18,29 @@ afterEach(() => vi.unstubAllGlobals());
 async function submit(username = "admin", password = "secret-password") {
   const user = userEvent.setup();
   if (username) await user.type(screen.getByLabelText(/username/i), username);
-  if (password) await user.type(screen.getByLabelText(/password/i), password);
+  if (password) await user.type(screen.getByLabelText(/^password$/i), password);
   await user.click(screen.getByRole("button", { name: /sign in/i }));
 }
 
 describe("LoginForm", () => {
+  it("show/hide password toggles what was typed into view and back, without submitting", async () => {
+    const seen = stubFetch(() => json({}));
+    render(<LoginForm next="/dashboard" />);
+    const user = userEvent.setup();
+    const field = screen.getByLabelText(/^password$/i);
+    await user.type(field, "secret-password");
+    expect(field).toHaveAttribute("type", "password");
+    const toggle = screen.getByRole("button", { name: "Show password" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await user.click(toggle);
+    expect(field).toHaveAttribute("type", "text");
+    expect(field).toHaveValue("secret-password");
+    expect(screen.getByRole("button", { name: "Hide password" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "Hide password" }));
+    expect(field).toHaveAttribute("type", "password");
+    expect(seen).toHaveLength(0);
+  });
+
   it("asks for both fields before calling the server", async () => {
     const seen = stubFetch(() => json({}));
     render(<LoginForm next="/dashboard" />);
@@ -36,7 +54,7 @@ describe("LoginForm", () => {
     render(<LoginForm next="/dashboard" />);
     await submit();
     expect(await screen.findByRole("alert")).toHaveTextContent("Invalid username or password.");
-    expect(screen.getByLabelText(/password/i)).toHaveValue("");
+    expect(screen.getByLabelText(/^password$/i)).toHaveValue("");
     expect(replace).not.toHaveBeenCalled();
   });
 
