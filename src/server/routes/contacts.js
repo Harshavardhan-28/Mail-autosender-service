@@ -130,9 +130,10 @@ export function companiesRouter({ pool }) {
       if (!parsed.success) throw new HttpError(400, "Invalid query parameters");
       const { batchId } = parsed.data;
       const { rows } = await pool.query(
-        `SELECT min(btrim(company)) AS company, count(*)::int AS count FROM contacts
+        // COLLATE "C": the shown spelling must not depend on the database locale (uppercase-first everywhere).
+        `SELECT min(btrim(company) COLLATE "C") AS company, count(*)::int AS count FROM contacts
           WHERE btrim(coalesce(company, '')) <> '' AND ($1::uuid IS NULL OR batch_id = $1::uuid)
-          GROUP BY lower(btrim(company)) ORDER BY lower(btrim(company)), min(btrim(company))`,
+          GROUP BY lower(btrim(company)) ORDER BY lower(btrim(company)), min(btrim(company) COLLATE "C")`,
         [batchId ?? null],
       );
       res.json({ companies: rows });
