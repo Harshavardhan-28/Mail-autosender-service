@@ -5,6 +5,7 @@ import { getTemplate } from "../domain/template.js";
 import { getSendWindow, isInSendWindow } from "../domain/sendWindow.js";
 import { classifySendError } from "./classify.js";
 import { followupSendsAllowed } from "./sweep.js";
+import { getAttachmentName } from "../domain/attachmentName.js";
 import { buildMail, createResumeCache, loadAttachments, loadSignature, newMessageId } from "./send.js";
 import { createResumeStorage } from "../storage/resumes.js";
 
@@ -169,7 +170,7 @@ async function processMessage({ pool, mailer, config, sendTimeoutMs, resumeFetch
       try {
         // Pre-send, like the signature: the snapshotted resume (or the legacy file) is read here so any
         // failure is a hold and nothing is handed to SMTP without it.
-        attachments = await loadAttachments({ config, message, db: client, storage: storage(), cache, timeoutMs: resumeFetchTimeoutMs });
+        attachments = await loadAttachments({ config, message, db: client, storage: storage(), cache, timeoutMs: resumeFetchTimeoutMs, fileName: (await getAttachmentName(client, config)).fileName });
       } catch (err) {
         failure = err;
       }

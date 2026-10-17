@@ -31,7 +31,7 @@ import type {
   Resume,
   RowIssue,
   SendWindow,
-  SendWindowInfo,
+  AttachmentNameInfo, SendWindowInfo,
   SweepResult,
   UploadResult,
   User,
@@ -314,6 +314,12 @@ export function createApi(options: ApiOptions = {}) {
     },
     async saveFollowupTemplate(template: FollowupTemplate): Promise<FollowupTemplate> {
       return (await request<{ template: FollowupTemplate }>("PUT", "/api/template/followup", { json: template })).template;
+    },
+    getAttachmentName(): Promise<AttachmentNameInfo> {
+      return request("GET", "/api/settings/attachment-name");
+    },
+    saveAttachmentName(body: { name: string } | { reset: true }): Promise<AttachmentNameInfo> {
+      return request("PUT", "/api/settings/attachment-name", { json: body });
     },
     getSendWindow(): Promise<SendWindowInfo> {
       return request("GET", "/api/settings/send-window");

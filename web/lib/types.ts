@@ -251,6 +251,13 @@ export interface SendWindow {
 }
 
 /** `enforced` is false on servers that do not gate sending (local development). */
+/** The file name every resume attachment is sent under (Resumes page). */
+export interface AttachmentNameInfo {
+  name: string;
+  fileName: string;
+  isDefault: boolean;
+}
+
 export interface SendWindowInfo {
   enforced: boolean;
   window: SendWindow;

@@ -40,7 +40,7 @@ function assertSignedWithResume(raw) {
   assert.match(body, /Content-Type: text\/html/i);
   assert.ok(body.includes("example.com/portfolio-fixture"), "signature html is in the body");
   assert.ok(body.includes("<strong>Test Signer</strong>"), "signature name is in the body");
-  assert.match(body, /Content-Disposition: attachment;\s*filename=("?)resume\.pdf/i, "resume is attached");
+  assert.match(body, /Content-Disposition: attachment;\s*filename=("?)Harsh_Resume\.pdf/i, "resume is attached");
   assert.match(body, /application\/pdf/i);
 }
 

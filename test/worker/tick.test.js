@@ -107,13 +107,13 @@ test("only due scheduled messages are sent; injected clock decides", async () =>
   assert.equal((await msgRow(future.msg.id)).state, "sent");
 });
 
-test("the legacy resume file is read before sending and attached as bytes with its own name", async () => {
+test("the legacy resume file is read before sending and attached as bytes under the fixed attachment name", async () => {
   await dueInitial();
   const m = fakeMailer();
   const file = path.resolve("test/fixtures/resume.pdf");
   await tick({ mailer: m, config: { resumePath: file } });
   assert.equal(m.calls[0].attachments.length, 1);
-  assert.equal(m.calls[0].attachments[0].filename, "resume.pdf");
+  assert.equal(m.calls[0].attachments[0].filename, "Harsh_Resume.pdf");
   assert.equal(m.calls[0].attachments[0].contentType, "application/pdf");
   assert.ok(Buffer.isBuffer(m.calls[0].attachments[0].content) && m.calls[0].attachments[0].content.length > 0);
 });
