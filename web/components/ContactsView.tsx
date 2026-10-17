@@ -6,7 +6,7 @@ import { Building2, CalendarClock, Check, ChevronLeft, ChevronRight, Layers, Loa
 import { toast } from "@/lib/toast";
 import { api, ApiError } from "@/lib/api";
 import { checkSendTime, toLocalInputValue, MAX_DAYS_AHEAD } from "@/lib/schedule";
-import { formatDateTime, plural, statusLabel } from "@/lib/format";
+import { formatDateTime, formatShort, plural, statusLabel } from "@/lib/format";
 import { refusalText } from "@/lib/refusals";
 import { CONTACT_STATUSES, type BatchSummary, type CompanyCount, type ContactListItem, type ContactStatus, type ContactsPage, type MessageRef, type Resume } from "@/lib/types";
 import { useMode } from "./AppShell";
@@ -557,8 +557,8 @@ export function ContactsView({ initialBatchId, initialStatus, initialQ, initialC
                     <div className="min-w-0 flex-1 text-[12.5px]">
                       {m ? (
                         <>
-                          <div className="whitespace-nowrap">{m.kind === "followup" ? "Follow-up" : "First email"} {m.state.replace("_", " ")}</div>
-                          <div className="text-[11.5px] whitespace-nowrap text-muted-foreground">{formatDateTime(m.sentAt ?? m.scheduledFor)}</div>
+                          <div className="truncate">{m.kind === "followup" ? "Follow-up" : "First email"} {m.state.replace("_", " ")}</div>
+                          <div className="truncate text-[11.5px] text-muted-foreground" title={formatDateTime(m.sentAt ?? m.scheduledFor)}>{formatShort(m.sentAt ?? m.scheduledFor)}</div>
                         </>
                       ) : c.repliedAt ? (
                         <div className="whitespace-nowrap">Replied {formatDateTime(c.repliedAt)}</div>

@@ -119,8 +119,8 @@ export function FollowupToggle({ contact, onChange, disabled, tz = DEFAULT_SEND_
             className="h-7 w-[8.5rem] px-2 text-[13px]"
           />
         </label>
-        {enabled && <span className="text-xs text-muted-foreground">{when}</span>}
       </div>
+      {enabled && <p className="text-xs whitespace-nowrap text-muted-foreground">{when}</p>}
       {error && (
         <p className="text-xs text-destructive" id={`${id}-err`}>
           {error}
