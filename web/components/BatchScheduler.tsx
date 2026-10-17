@@ -70,6 +70,7 @@ export function BatchScheduler({ upload, resumes = [], sendWindow = null, now = 
 
   // The server bunches staggered sends inside the saved window whether or not it enforces it, so preview the same.
   const win = sendWindow?.window?.start && sendWindow.window.end && sendWindow.window.tz ? sendWindow.window : null;
+  const followupTz = sendWindow?.window?.tz || undefined;
   const plan = planSchedule({ selectedIds: selected, sendAt, staggerMinutes: stagger, overrides, now: now(), window: win });
   const errs = plan.ok ? null : plan.errors;
   // The bulk time is checked as soon as it is typed, even before any row is selected.
@@ -294,7 +295,7 @@ export function BatchScheduler({ upload, resumes = [], sendWindow = null, now = 
                         <StatusBadge status={st} />
                       </TableCell>
                       <TableCell className="max-md:block max-md:px-4 max-md:py-1">
-                        <FollowupToggle contact={c} disabled={r.blocked} />
+                        <FollowupToggle key={`${c.id}:${c.followupRequested}:${c.followupAt}:${followupTz}`} contact={c} tz={followupTz} disabled={r.blocked} />
                       </TableCell>
                       <TableCell className="pr-4 max-md:block max-md:px-4 max-md:py-1">
                         {scheduledAt[c.id] ? (

@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { CalendarClock, CheckCheck, ChevronLeft, ChevronRight, Inbox, RefreshCw, Search, TriangleAlert, Upload } from "lucide-react";
+import { Building2, CalendarClock, CheckCheck, ChevronLeft, ChevronRight, Inbox, RefreshCw, Search, TriangleAlert, Upload } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { formatAbsolute, formatRelative, plural } from "@/lib/format";
-import type { MailRow, MailsPage, MailTab, MessageKind } from "@/lib/types";
+import type { CompanyCount, MailRow, MailsPage, MailTab, MessageKind } from "@/lib/types";
 import { useMode } from "./AppShell";
 import { hueClass, initials } from "./Dyn";
 import { kindName } from "./MailChips";
@@ -15,6 +15,7 @@ import { Notice } from "./Notice";
 import { OverdueBanner } from "./OverdueBanner";
 import { PageHeader } from "./PageHeader";
 import { Button } from "@/components/ui/button";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -28,11 +29,12 @@ const TABS: { key: MailTab; label: string; icon: typeof Inbox }[] = [
 export const isTab = (v: string | undefined): v is MailTab => v === "sent" || v === "scheduled" || v === "attention";
 export const isKind = (v: string | undefined): v is MessageKind => v === "initial" || v === "followup";
 
-/** The list's query string. The detail page carries it so "Back" returns to the same tab, search and page. */
-export function listQueryString({ tab, q, kind, page }: { tab: MailTab; q: string; kind: MessageKind | ""; page: number }): string {
+/** The list's query string. The detail page carries it so "Back" returns to the same tab, filters and page. */
+export function listQueryString({ tab, q, kind, company = "", page }: { tab: MailTab; q: string; kind: MessageKind | ""; company?: string; page: number }): string {
   const p = new URLSearchParams({ tab });
   if (q) p.set("q", q);
   if (kind) p.set("kind", kind);
+  if (company) p.set("company", company);
   if (page > 1) p.set("page", String(page));
   return p.toString();
 }
@@ -133,7 +135,19 @@ function Empty({ tab, filtered, onClear }: { tab: MailTab; filtered: boolean; on
   );
 }
 
-export function MailListView({ initialTab, initialQ = "", initialKind, initialPage = 1 }: { initialTab?: string; initialQ?: string; initialKind?: string; initialPage?: number }) {
+export function MailListView({
+  initialTab,
+  initialQ = "",
+  initialKind,
+  initialCompany = "",
+  initialPage = 1,
+}: {
+  initialTab?: string;
+  initialQ?: string;
+  initialKind?: string;
+  initialCompany?: string;
+  initialPage?: number;
+}) {
   const { mode } = useMode();
   const [tab, setTab] = useState<MailTab>(isTab(initialTab) ? initialTab : "scheduled");
   // No tab in the URL: open on Scheduled, or on Sent when nothing is scheduled.
@@ -141,6 +155,8 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
   const [search, setSearch] = useState(initialQ);
   const [q, setQ] = useState(initialQ);
   const [kind, setKind] = useState<MessageKind | "">(isKind(initialKind) ? initialKind : "");
+  const [company, setCompany] = useState(initialCompany);
+  const [companies, setCompanies] = useState<CompanyCount[]>([]);
   const [page, setPage] = useState(Math.max(1, initialPage));
   const [data, setData] = useState<MailsPage | null>(null);
   const [counts, setCounts] = useState<MailsPage["counts"] | null>(null);
@@ -162,10 +178,14 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
   }, [search, q]);
 
   useEffect(() => {
+    api.listCompanies().then((list = []) => setCompanies(list), () => {});
+  }, [tick]);
+
+  useEffect(() => {
     let live = true;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the request starts here; this only flags it
     setLoading(true);
-    api.listMails({ state: tab, kind: kind || undefined, q: q || undefined, page, pageSize: PAGE_SIZE }).then(
+    api.listMails({ state: tab, kind: kind || undefined, q: q || undefined, company: company || undefined, page, pageSize: PAGE_SIZE }).then(
       (d) => {
         if (!live) return;
         setCounts(d.counts);
@@ -189,27 +209,28 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
     return () => {
       live = false;
     };
-  }, [tab, kind, q, page, tick]);
+  }, [tab, kind, q, company, page, tick]);
 
   // Keep the URL in step so a refresh or "Back" lands on the same view.
   useEffect(() => {
     if (autoPick.current) return;
-    window.history.replaceState(null, "", `/mail?${listQueryString({ tab, q, kind, page })}`);
-  }, [tab, q, kind, page]);
+    window.history.replaceState(null, "", `/mail?${listQueryString({ tab, q, kind, company, page })}`);
+  }, [tab, q, kind, company, page]);
 
   const total = data?.total ?? 0;
   const from = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const to = Math.min(page * PAGE_SIZE, total);
   const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const filtered = q !== "" || kind !== "";
+  const filtered = q !== "" || kind !== "" || company !== "";
   const visible = data ? data.mails : [];
-  const backTo = listQueryString({ tab, q, kind, page });
+  const backTo = listQueryString({ tab, q, kind, company, page });
 
   const selected = desktop ? (visible.find((m) => m.id === selId) ?? visible[0] ?? null) : null;
   const clearFilters = () => {
     setSearch("");
     setQ("");
     setKind("");
+    setCompany("");
     setPage(1);
   };
 
@@ -270,7 +291,7 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
                 if (key === tab) return;
                 autoPick.current = false;
                 setPage(1);
-                            setTab(key);
+                setTab(key);
               }}
               className={cn(
                 "-mb-px inline-flex items-center gap-2 border-b-2 px-3 pt-3 pb-[11px] text-[13.5px] font-medium whitespace-nowrap transition-colors outline-none focus-visible:bg-accent",
@@ -313,6 +334,27 @@ export function MailListView({ initialTab, initialQ = "", initialKind, initialPa
               {label}
             </button>
           ))}
+        </div>
+        <div className="relative">
+          <Building2 aria-hidden="true" className="pointer-events-none absolute top-1/2 left-3 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <NativeSelect
+            id="f-company"
+            aria-label="Company"
+            className="[&_select]:h-9 [&_select]:bg-card [&_select]:pl-9"
+            value={company}
+            onChange={(e) => {
+              setPage(1);
+              setCompany(e.target.value);
+            }}
+          >
+            <option value="">All companies</option>
+            {companies.map((c) => (
+              <option key={c.company} value={c.company}>
+                {c.company} ({c.count})
+              </option>
+            ))}
+            {company && !companies.some((c) => c.company === company) && <option value={company}>{company}</option>}
+          </NativeSelect>
         </div>
       </div>
 

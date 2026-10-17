@@ -56,7 +56,9 @@ const REASON_TEXT = { not_found: "not found", permission: "access refused", unav
 // messages never carry keys, paths, bucket names or credentials.
 //   message.resume_id set -> that library resume at the stored generation (dry-run: skipped, no fetch)
 //   otherwise             -> the legacy RESUME_PATH file; real mode with neither is a hold (dry-run: lenient, like the signature)
-export async function loadAttachments({ config, message, db, storage, cache, timeoutMs = 30_000 }) {
+// `fileName` is the name every attachment is sent under (attachment_name setting); the library or legacy
+// file's own name is only a fallback when none is passed.
+export async function loadAttachments({ config, message, db, storage, cache, timeoutMs = 30_000, fileName }) {
   if (message.resume_id) {
     if (config.dryRun) return [];
     let row;
@@ -70,7 +72,7 @@ export async function loadAttachments({ config, message, db, storage, cache, tim
     try {
       const content = await cache.get(row.storage_key, message.resume_generation, () => withDeadline(storage.get(row.storage_key, message.resume_generation), timeoutMs));
       if (!Buffer.isBuffer(content) || content.length === 0) throw new Error("empty");
-      return [{ filename: row.file_name, content, contentType: "application/pdf" }];
+      return [{ filename: fileName ?? row.file_name, content, contentType: "application/pdf" }];
     } catch (err) {
       const reason = typeof err?.reason === "string" && err.reason in REASON_TEXT ? err.reason : "unavailable";
       throw Object.assign(new Error(`${label} could not be fetched (${REASON_TEXT[reason]})`), { code: "ERESUME", reason });
@@ -84,7 +86,7 @@ export async function loadAttachments({ config, message, db, storage, cache, tim
   try {
     const content = readFileSync(config.resumePath);
     const ext = path.extname(config.resumePath).toLowerCase();
-    return [{ filename: path.basename(config.resumePath), content, ...(ext === ".pdf" ? { contentType: "application/pdf" } : {}) }];
+    return [{ filename: ext === ".pdf" && fileName ? fileName : path.basename(config.resumePath), content, ...(ext === ".pdf" ? { contentType: "application/pdf" } : {}) }];
   } catch (err) {
     if (config.dryRun) return [];
     throw Object.assign(new Error("resume file unreadable"), { code: err?.code === "EACCES" ? "EACCES" : "ENOENT" });

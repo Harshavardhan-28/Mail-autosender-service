@@ -199,12 +199,12 @@ describe("api client 401 and errors", () => {
     const f = fakeFetch(() => json({ messages: [], message: {}, contact: {}, followup: null }));
     const api = createApi({ fetch: f.fn, onUnauthorized: vi.fn() });
     await api.scheduleBatch("b1", { contactIds: ["c1"], sendAt: "2030-01-01T09:00:00.000Z", staggerMinutes: 5 });
-    await api.setFollowup("c1", { enabled: true, delayDays: 4 });
+    await api.setFollowup("c1", { enabled: true, date: "2030-01-05" });
     await api.cancelMessage("m1");
     const sent = f.calls.filter((c) => c.method !== "GET").map((c) => `${c.method} ${c.url} ${c.body ?? ""}`);
     expect(sent).toEqual([
       'POST /api/batches/b1/schedule {"contactIds":["c1"],"sendAt":"2030-01-01T09:00:00.000Z","staggerMinutes":5}',
-      'PUT /api/contacts/c1/followup {"enabled":true,"delayDays":4}',
+      'PUT /api/contacts/c1/followup {"enabled":true,"date":"2030-01-05"}',
       "DELETE /api/messages/m1 ",
     ]);
   });

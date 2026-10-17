@@ -184,6 +184,15 @@ test("DELETE is refused with 409 and the count while scheduled/in-flight/needs_r
   assert.equal((await readdir(dir)).length, 1, "object untouched");
 });
 
+test("a scheduled follow-up does not block DELETE or count as pending (follow-ups carry no resume)", async () => {
+  const a = await ok({ file: pdfBytes("a"), displayName: "Alpha" });
+  const { contacts } = await seedBatch(t.pool, ["f1@x.com"]);
+  const m = await addMessage(t.pool, contacts[0].id, { kind: "followup", state: "scheduled" });
+  await t.pool.query("UPDATE messages SET resume_id = $1 WHERE id = $2", [a.id, m.id]);
+  assert.equal((await c.get("/api/resumes")).json.resumes[0].usage.pendingMessages, 0);
+  assert.equal((await c.raw("DELETE", `/api/resumes/${a.id}`)).status, 200);
+});
+
 test("DELETE with only sent history: soft-deleted, the object stays (a later follow-up may still need it), choices cleared", async () => {
   const a = await ok({ file: pdfBytes("a"), displayName: "Alpha" });
   const { contacts, batchId } = await seedBatch(t.pool, ["s@x.com"]);

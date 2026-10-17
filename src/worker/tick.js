@@ -5,6 +5,7 @@ import { getTemplate } from "../domain/template.js";
 import { getSendWindow, isInSendWindow } from "../domain/sendWindow.js";
 import { classifySendError } from "./classify.js";
 import { followupSendsAllowed } from "./sweep.js";
+import { getAttachmentName } from "../domain/attachmentName.js";
 import { buildMail, createResumeCache, loadAttachments, loadSignature, newMessageId } from "./send.js";
 import { createResumeStorage } from "../storage/resumes.js";
 
@@ -104,7 +105,7 @@ function withTimeout(promise, ms) {
 // row for the whole SMTP call. markReplied/optOut/followup-toggle take FOR UPDATE on that row, so
 // they wait until the send finishes instead of racing it: re-check + send are effectively atomic
 // with respect to every user action on this contact.
-async function processMessage({ pool, mailer, config, sendTimeoutMs, resumeFetchTimeoutMs, logger, storage, cache }, claimed, clock) {
+async function processMessage({ pool, mailer, config, sendTimeoutMs, resumeFetchTimeoutMs, logger, storage, cache, attachmentFileName }, claimed, clock) {
   const client = await pool.connect();
   let begun = false;
   let outcome = "lost";
@@ -164,11 +165,12 @@ async function processMessage({ pool, mailer, config, sendTimeoutMs, resumeFetch
       failure = err; // classified as a pre-send (retryable) failure; nothing is handed to SMTP
     }
     let attachments = [];
-    if (!failure) {
+    // The resume goes only with the initial; a follow-up is a short nudge in the same thread.
+    if (!failure && message.kind === "initial") {
       try {
         // Pre-send, like the signature: the snapshotted resume (or the legacy file) is read here so any
         // failure is a hold and nothing is handed to SMTP without it.
-        attachments = await loadAttachments({ config, message, db: client, storage: storage(), cache, timeoutMs: resumeFetchTimeoutMs });
+        attachments = await loadAttachments({ config, message, db: client, storage: storage(), cache, timeoutMs: resumeFetchTimeoutMs, fileName: attachmentFileName });
       } catch (err) {
         failure = err;
       }
@@ -196,7 +198,7 @@ async function processMessage({ pool, mailer, config, sendTimeoutMs, resumeFetch
             WHERE c.id = $1 AND c.followup_requested AND c.status = 'sent'
               AND NOT EXISTS (SELECT 1 FROM suppressions s WHERE s.email = lower(c.email))
            ON CONFLICT (contact_id, kind) WHERE state <> 'cancelled' DO NOTHING`,
-          [contact.id, followupDueAt(sentAt, contact.followup_delay_days), message.resume_id, message.resume_generation],
+          [contact.id, followupDueAt(sentAt, contact.followup_delay_days, contact.followup_at), message.resume_id, message.resume_generation],
         );
       }
       await client.query("INSERT INTO events(contact_id, type, meta) VALUES ($1, 'sent', $2)", [
@@ -336,7 +338,9 @@ export async function runTick({
     if (!Number.isNaN(heldAt) && clock().getTime() - heldAt < HOLD_MINUTES * 60_000) return { ...summary, paused: true };
   }
   let storage;
-  const ctx = { pool, mailer, config, sendTimeoutMs, resumeFetchTimeoutMs, logger, cache: createResumeCache(), storage: () => (storage ??= resumeStorage ?? createResumeStorage(config)) };
+  // Read once per tick, outside any per-message transaction: a save on the Resumes page applies from the next tick.
+  const attachmentFileName = (await getAttachmentName(pool, config)).fileName;
+  const ctx = { pool, mailer, config, sendTimeoutMs, resumeFetchTimeoutMs, logger, cache: createResumeCache(), attachmentFileName, storage: () => (storage ??= resumeStorage ?? createResumeStorage(config)) };
   // One message per iteration: only the row in flight is ever in `sending`; cap and the
   // per-tick limit are re-evaluated before every claim.
   // Real sends are claimed only inside the daily window when it is enforced (production). Dry-run and

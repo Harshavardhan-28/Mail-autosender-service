@@ -47,12 +47,13 @@ export function serializeMail(r) {
 
 const overdueCutoff = (now) => new Date(now.getTime() - OVERDUE_MINUTES * 60_000);
 
-export async function listMails(pool, { state = "all", kind, q, batchId, page = 1, pageSize = 25 }, now = new Date()) {
+export async function listMails(pool, { state = "all", kind, q, batchId, company, page = 1, pageSize = 25 }, now = new Date()) {
   const params = [];
   const add = (v) => (params.push(v), `$${params.length}`);
   const where = [`m.state = ANY(${add(STATE_GROUPS[state] ?? LIVE_STATES)}::text[])`];
   if (kind) where.push(`m.kind = ${add(kind)}`);
   if (batchId) where.push(`c.batch_id = ${add(batchId)}`);
+  if (company) where.push(`lower(btrim(c.company)) = lower(${add(company)})`);
   if (q) {
     const p = add(`%${escapeLike(q)}%`);
     where.push(`(c.company ILIKE ${p} OR c.person ILIKE ${p} OR c.email ILIKE ${p} OR c.subject ILIKE ${p})`);
@@ -109,7 +110,7 @@ export async function getMail(pool, id, { config = {}, now = new Date() } = {}) 
     ...serializeMail(row),
     subject: preview.subject,
     body: preview.text,
-    attachment: attachments.get(row.c_id) ?? null,
+    attachment: row.kind === "followup" ? null : (attachments.get(row.c_id) ?? null), // follow-ups carry no resume
     messageId: row.message_id,
     threadedWith: initial?.rows[0]?.id ?? null,
     related: other ? { id: other.id, kind: other.kind, state: other.state } : null,

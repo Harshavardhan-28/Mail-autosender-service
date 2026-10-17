@@ -1,6 +1,6 @@
 import { HttpError } from "../server/errors.js";
 import { inTx, serializeContact } from "./contacts.js";
-import { nextWindowOpen, windowBoundsFor } from "./sendWindow.js";
+import { nextWindowOpen, windowBoundsFor, zonedInstant } from "./sendWindow.js";
 import { assertLiveResume, noResumeError, resolveResume } from "./resumes.js";
 
 export const MAX_DAYS_AHEAD = 90;
@@ -268,7 +268,7 @@ export async function resolveMessage(pool, messageId, action, now = new Date()) 
             WHERE c.id = $1 AND c.followup_requested AND c.status = 'sent'
               AND NOT EXISTS (SELECT 1 FROM suppressions s WHERE s.email = lower(c.email))
            ON CONFLICT (contact_id, kind) WHERE state <> 'cancelled' DO NOTHING`,
-          [contactId, followupDueAt(now, contact.followup_delay_days), msg.resume_id, msg.resume_generation],
+          [contactId, followupDueAt(now, contact.followup_delay_days, contact.followup_at), msg.resume_id, msg.resume_generation],
         );
       }
     } else if (action === "requeue") {
@@ -295,10 +295,36 @@ export async function resolveMessage(pool, messageId, action, now = new Date()) 
   });
 }
 
-export const followupDueAt = (sentAt, delayDays) => new Date(new Date(sentAt).getTime() + delayDays * DAY_MS);
+// A picked calendar date -> the send-window opening on that day in the window's tz. Today (in that tz) or later, <= 90 days out.
+// Today after its opening has passed -> the next moment sending is allowed (now inside the window, else the next opening).
+export function followupInstant(dateStr, window, now = new Date()) {
+  const m = typeof dateStr === "string" ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr) : null;
+  if (!m) throw bad("date must be YYYY-MM-DD");
+  const [y, mo, d] = [+m[1], +m[2], +m[3]];
+  const probe = new Date(Date.UTC(y, mo - 1, d));
+  if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== mo - 1 || probe.getUTCDate() !== d) throw bad("date is not a valid date");
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: window.tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+  if (dateStr < today) throw bad("date must be today or later");
+  const [sh, sm] = window.start.split(":").map(Number);
+  const opening = zonedInstant(window.tz, y, mo, d, sh, sm);
+  const at = opening.getTime() < now.getTime() ? nextWindowOpen(window, now) : opening;
+  if (at.getTime() > now.getTime() + MAX_DAYS_AHEAD * DAY_MS) throw bad(`date must be within ${MAX_DAYS_AHEAD} days`);
+  return at;
+}
+
+// A picked instant wins when it is at least a day after the first send; otherwise (none picked, or a date on/before
+// the send day) the follow-up goes at sent_at + delay, so it never lands minutes after the initial.
+export const followupDueAt = (sentAt, delayDays, followupAt = null) => {
+  const sent = new Date(sentAt).getTime();
+  const picked = followupAt ? new Date(followupAt).getTime() : null;
+  return new Date(picked !== null && picked >= sent + DAY_MS ? picked : sent + delayDays * DAY_MS);
+};
 
 // Follow-up checkbox. See the API section of the plan.
-export async function syncFollowup(pool, contactId, { enabled, delayDays }) {
+// `date` (YYYY-MM-DD, needs `window`) sets followup_at; `delayDays` sets the delay and clears followup_at.
+export async function syncFollowup(pool, contactId, { enabled, delayDays, date, window, now = new Date() }) {
+  if (date !== undefined && delayDays !== undefined) throw bad("Send either date or delayDays, not both");
+  const pickedAt = date === undefined ? undefined : followupInstant(date, window, now);
   try {
     return await inTx(pool, async (db) => {
       const rows = await lockContactsForScheduling(db, [contactId]);
@@ -310,9 +336,12 @@ export async function syncFollowup(pool, contactId, { enabled, delayDays }) {
       }
       const delay = delayDays ?? row.followup_delay_days;
       const upd = await db.query(
-        "UPDATE contacts SET followup_requested = $2, followup_delay_days = $3 WHERE id = $1 RETURNING *",
-        [contactId, enabled, delay],
+        `UPDATE contacts SET followup_requested = $2, followup_delay_days = $3,
+                followup_at = CASE WHEN $4::boolean THEN $5::timestamptz WHEN $6::boolean THEN NULL ELSE followup_at END
+          WHERE id = $1 RETURNING *`,
+        [contactId, enabled, delay, pickedAt !== undefined, pickedAt ?? null, delayDays !== undefined],
       );
+      const followupAt = upd.rows[0].followup_at;
       let followup = null;
       const live = await db.query(
         "SELECT * FROM messages WHERE contact_id = $1 AND kind = 'followup' AND state <> 'cancelled' FOR UPDATE",
@@ -334,7 +363,7 @@ export async function syncFollowup(pool, contactId, { enabled, delayDays }) {
             [contactId],
           );
           if (init.rowCount) {
-            const due = followupDueAt(init.rows[0].sent_at, delay);
+            const due = followupDueAt(init.rows[0].sent_at, delay, followupAt);
             if (!live.rowCount) {
               followup = (
                 await db.query(
@@ -353,7 +382,7 @@ export async function syncFollowup(pool, contactId, { enabled, delayDays }) {
         }
         await db.query("INSERT INTO events(contact_id, type, meta) VALUES ($1, 'followup_enabled', $2)", [
           contactId,
-          JSON.stringify({ delayDays: delay }),
+          JSON.stringify({ delayDays: delay, followupAt }),
         ]);
       }
       return { contact: serializeContact(upd.rows[0]), followup: followup ? serializeMessage(followup) : null };
@@ -361,6 +390,31 @@ export async function syncFollowup(pool, contactId, { enabled, delayDays }) {
   } catch (err) {
     throw mapUnique(err);
   }
+}
+
+// Applies syncFollowup to every contact of a batch (optionally one company, exact case-insensitive).
+// A contact syncFollowup refuses (replied, bounced, suppressed, ...) is skipped; anything else fails the request.
+export async function setFollowupBulk(pool, { batchId, company, enabled, date, window, now = new Date() }) {
+  if (enabled && date === undefined) throw bad("date is required to enable follow-ups");
+  if (!enabled && date !== undefined) throw bad("date is only allowed when enabling follow-ups");
+  if (enabled) followupInstant(date, window, now); // reject a bad date before any write
+  if (!(await pool.query("SELECT 1 FROM batches WHERE id = $1", [batchId])).rowCount) throw new HttpError(404, "Batch not found");
+  const { rows } = await pool.query(
+    "SELECT id FROM contacts WHERE batch_id = $1 AND ($2::text IS NULL OR lower(btrim(company)) = lower($2)) ORDER BY created_at, id",
+    [batchId, company ?? null],
+  );
+  let updated = 0;
+  let skipped = 0;
+  for (const { id } of rows) {
+    try {
+      await syncFollowup(pool, id, { enabled, date, window, now });
+      updated++;
+    } catch (err) {
+      if (!(err instanceof RefusedError)) throw err;
+      skipped++;
+    }
+  }
+  return { updated, skipped, total: rows.length };
 }
 
 // Scheduled messages whose time passed more than OVERDUE_MINUTES ago (window closed, pacing/cap did not fit them).

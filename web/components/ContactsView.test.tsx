@@ -19,6 +19,7 @@ const row: ContactListItem = {
   status: "scheduled",
   followupRequested: false,
   followupDelayDays: 7,
+  followupAt: null,
   repliedAt: null,
   error: null,
   createdAt: "2030-01-01T00:00:00Z",
@@ -157,5 +158,85 @@ describe("ContactsView", () => {
     stubFetch((c) => (c.url === "/api/messages/overdue" ? json({ count: 2, overdueMinutes: 60, messages: [] }) : c.url === "/api/batches" ? json({ batches: [] }) : c.url === "/api/settings/send-window" ? json({ enforced: true, window: { start: "09:00", end: "10:00", tz: "Asia/Kolkata" } }) : json({ contacts: [row], total: 1, page: 1, pageSize: 25 })));
     render(<ContactsView />);
     expect(await screen.findByText(/2 scheduled emails are past due/)).toBeInTheDocument();
+  });
+  describe("company filter and bulk follow-up", () => {
+    const spring = { id: "b-1", name: "Spring", originalFilename: null, createdAt: "2030-01-01T00:00:00Z", contactCount: 4, statusCounts: {} };
+    const fall = { id: "b-2", name: "Fall", originalFilename: null, createdAt: "2030-01-02T00:00:00Z", contactCount: 2, statusCounts: {} };
+    const serve = (companies: (url: string) => { company: string; count: number }[], extra?: (c: { url: string; method: string }) => Response | null) =>
+      stubFetch((c) => {
+        const hit = extra?.(c);
+        if (hit) return hit;
+        if (c.url === "/api/batches") return json({ batches: [spring, fall] });
+        if (c.url.startsWith("/api/companies")) return json({ companies: companies(c.url) });
+        return json({ contacts: [row], total: 1, page: 1, pageSize: 25 });
+      });
+    const contactCalls = (seen: { url: string }[]) => seen.filter((c) => c.url.startsWith("/api/contacts")).map((c) => c.url);
+
+    it("lists the batch's companies with counts next to the Batch select and filters by the picked one, back on page 1", async () => {
+      const seen = serve(() => [
+        { company: "Acme", count: 3 },
+        { company: "Globex", count: 1 },
+      ]);
+      render(<ContactsView initialBatchId="b-1" />);
+      const select = await screen.findByRole("combobox", { name: "Company" });
+      await screen.findByRole("option", { name: "Acme (3)" });
+      expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["All companies", "Acme (3)", "Globex (1)"]);
+      expect(seen.some((c) => c.url === "/api/companies?batchId=b-1")).toBe(true);
+      await userEvent.selectOptions(select, "Acme");
+      await vi.waitFor(() => expect(contactCalls(seen).at(-1)).toBe("/api/contacts?batchId=b-1&company=Acme&page=1&pageSize=25"));
+    });
+
+    it("refetches companies when the batch changes and drops a company the new batch does not have", async () => {
+      const seen = serve((url) => (url.endsWith("b-2") ? [{ company: "Initech", count: 2 }] : [{ company: "Acme", count: 3 }]));
+      render(<ContactsView initialBatchId="b-1" initialCompany="Acme" />);
+      await screen.findByRole("option", { name: "Acme (3)" });
+      expect(contactCalls(seen)[0]).toBe("/api/contacts?batchId=b-1&company=Acme&page=1&pageSize=25");
+      await userEvent.selectOptions(screen.getByRole("combobox", { name: "Batch" }), "b-2");
+      await screen.findByRole("option", { name: "Initech (2)" });
+      expect(seen.some((c) => c.url === "/api/companies?batchId=b-2")).toBe(true);
+      expect(screen.getByRole("combobox", { name: "Company" })).toHaveValue("");
+      await vi.waitFor(() => expect(contactCalls(seen).at(-1)).toBe("/api/contacts?batchId=b-2&page=1&pageSize=25"));
+    });
+
+    it("offers the bulk follow-up bar only with a batch selected, scoped to the picked company, and reloads after applying", async () => {
+      const seen = serve(
+        () => [{ company: "Acme", count: 3 }],
+        (c) => (c.method === "PUT" ? json({ updated: 3, skipped: 0, total: 3 }) : null),
+      );
+      render(<ContactsView initialBatchId="b-1" />);
+      expect(await screen.findByText("Follow-up for all contacts in “Spring”")).toBeInTheDocument();
+      await screen.findByRole("option", { name: "Acme (3)" });
+      await userEvent.selectOptions(screen.getByRole("combobox", { name: "Company" }), "Acme");
+      expect(await screen.findByText("Follow-up for all contacts at Acme in “Spring”")).toBeInTheDocument();
+      const before = contactCalls(seen).length;
+      await userEvent.click(screen.getByRole("button", { name: "Schedule follow-up" }));
+      expect(await screen.findByText("Updated 3 of 3")).toBeInTheDocument();
+      expect(JSON.parse(String(seen.find((c) => c.method === "PUT")!.body))).toMatchObject({ batchId: "b-1", company: "Acme", enabled: true });
+      await vi.waitFor(() => expect(contactCalls(seen).length).toBeGreaterThan(before));
+    });
+
+    it("passes the send window's time zone to the follow-up date pickers", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-10-17T20:00:00Z")); // 18 Oct in IST, still 17 Oct in Los Angeles
+      try {
+        serve(
+          () => [{ company: "Acme", count: 3 }],
+          (c) => (c.url === "/api/settings/send-window" ? json({ enforced: true, window: { start: "09:00", end: "10:00", tz: "America/Los_Angeles" } }) : null),
+        );
+        render(<ContactsView initialBatchId="b-1" />);
+        await screen.findByText("Follow-up for all contacts in “Spring”");
+        await vi.waitFor(() => expect((screen.getByLabelText("Follow-up date") as HTMLInputElement).min).toBe("2026-10-17"));
+        await vi.waitFor(() => expect((screen.getByLabelText(/follow-up date for jo@acme.com/i) as HTMLInputElement).min).toBe("2026-10-17"));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("hides the bulk bar when no batch is selected", async () => {
+      serve(() => [{ company: "Acme", count: 3 }]);
+      render(<ContactsView />);
+      await screen.findByRole("option", { name: "Acme (3)" });
+      expect(screen.queryByRole("button", { name: "Schedule follow-up" })).toBeNull();
+    });
   });
 });

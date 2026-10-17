@@ -90,14 +90,14 @@ function attachmentsOf(raw) {
     }));
 }
 
-test("a real send carries the snapshotted library resume as a true PDF attachment (filename, application/pdf, exact bytes), not a link", async () => {
+test("a real send carries the snapshotted library resume as a true PDF attachment (fixed filename, application/pdf, exact bytes), not a link", async () => {
   const r = await addResume("Backend", "backend", "Harsh Khamkar - Backend.pdf");
   const { contact, msg } = await dueWith(r);
   const out = await tick();
   assert.equal(out.sent, 1);
   const atts = attachmentsOf(smtp.state.bodies[0]);
   assert.equal(atts.length, 1);
-  assert.equal(atts[0].filename, "Harsh Khamkar - Backend.pdf");
+  assert.equal(atts[0].filename, "Harsh_Resume.pdf", "sent under the fixed attachment name (default from the sender name), not the library file name");
   assert.equal(atts[0].contentType, "application/pdf");
   assert.ok(atts[0].content.equals(r.buffer), "bytes match the stored file");
   assert.doesNotMatch(smtp.state.bodies[0], /https?:\/\/[^\s"]*(storage\.googleapis|resume)/i, "no link to the file");
@@ -105,24 +105,35 @@ test("a real send carries the snapshotted library resume as a true PDF attachmen
   assert.equal((await contactRow(contact.id)).status, "sent");
 });
 
-test("the follow-up carries the initial's snapshot, even after the default resume was replaced", async () => {
+test("the follow-up carries no attachment (the resume goes only with the initial) and never fetches it", async () => {
   const first = await addResume("First", "first");
-  const { contact, msg } = await dueWith(first, { followup: true });
+  const { contact } = await dueWith(first, { followup: true });
   assert.equal((await tick()).sent, 1);
+  assert.equal(attachmentsOf(smtp.state.bodies[0]).length, 1, "the initial still carries the resume");
   const fu = (await pool.query("select * from messages where contact_id=$1 and kind='followup'", [contact.id])).rows[0];
-  assert.equal(fu.resume_id, first.id, "copied at creation");
-  // The library moves on: a new default, the old resume soft-deleted (allowed: nothing pending uses it... except this follow-up).
-  const second = await addResume("Second", "second");
-  await pool.query("update resumes set is_default=false where is_default");
-  await pool.query("update resumes set is_default=true where id=$1", [second.id]);
+  // Even with the resume object gone from storage, the follow-up is not held: nothing is fetched for it.
+  await unlink(path.join(dir, first.key)).catch(() => {});
   await pool.query("update messages set scheduled_for = now() - interval '1 minute' where id=$1", [fu.id]);
   smtp.state.bodies.length = 0;
   assert.equal((await tick()).sent, 1);
-  const atts = attachmentsOf(smtp.state.bodies[0]);
-  assert.equal(atts.length, 1);
-  assert.equal(atts[0].filename, first.fileName);
-  assert.ok(atts[0].content.equals(first.buffer), "still the first resume's bytes");
-  assert.equal(msg.id === fu.id, false);
+  assert.equal(attachmentsOf(smtp.state.bodies[0]).length, 0);
+  assert.equal((await msgRow(fu.id)).state, "sent");
+  assert.equal(await holdRow(), null);
+});
+
+test("every resume goes out under the configured attachment name, whatever it is called in the library", async () => {
+  await pool.query("INSERT INTO settings(key, value) VALUES ('attachment_name', $1::jsonb)", [JSON.stringify({ name: "Harshavardhan_Khamkar_Resume" })]);
+  try {
+    const a = await addResume("Backend engineer", "a", "backend engineer.pdf");
+    const b = await addResume("Data analyst", "b", "data-analyst-v3.pdf");
+    await dueWith(a);
+    await dueWith(b);
+    assert.equal((await tick()).sent, 2);
+    const names = smtp.state.bodies.map((raw) => attachmentsOf(raw)[0].filename);
+    assert.deepEqual(names, ["Harshavardhan_Khamkar_Resume.pdf", "Harshavardhan_Khamkar_Resume.pdf"]);
+  } finally {
+    await pool.query("DELETE FROM settings WHERE key = 'attachment_name'");
+  }
 });
 
 test("a soft-deleted resume whose object remains still sends (history is explainable and follow-ups keep working)", async () => {
@@ -228,12 +239,12 @@ test("dry-run never touches storage for a snapshotted resume, and still builds t
   assert.equal((await msgRow(msg.id)).dry_run, true);
 });
 
-test("legacy RESUME_PATH is the fallback when nothing is snapshotted: a real attachment named after the file", async () => {
+test("legacy RESUME_PATH is the fallback when nothing is snapshotted: a real attachment under the fixed name", async () => {
   await dueWith(null);
   assert.equal((await tick({ config: { resumePath: LEGACY } })).sent, 1);
   const atts = attachmentsOf(smtp.state.bodies[0]);
   assert.equal(atts.length, 1);
-  assert.equal(atts[0].filename, "resume.pdf");
+  assert.equal(atts[0].filename, "Harsh_Resume.pdf");
   assert.equal(atts[0].contentType, "application/pdf");
   assert.ok(atts[0].content.equals(readFileSync(LEGACY)));
 });

@@ -107,13 +107,13 @@ test("only due scheduled messages are sent; injected clock decides", async () =>
   assert.equal((await msgRow(future.msg.id)).state, "sent");
 });
 
-test("the legacy resume file is read before sending and attached as bytes with its own name", async () => {
+test("the legacy resume file is read before sending and attached as bytes under the fixed attachment name", async () => {
   await dueInitial();
   const m = fakeMailer();
   const file = path.resolve("test/fixtures/resume.pdf");
   await tick({ mailer: m, config: { resumePath: file } });
   assert.equal(m.calls[0].attachments.length, 1);
-  assert.equal(m.calls[0].attachments[0].filename, "resume.pdf");
+  assert.equal(m.calls[0].attachments[0].filename, "Harsh_Resume.pdf");
   assert.equal(m.calls[0].attachments[0].contentType, "application/pdf");
   assert.ok(Buffer.isBuffer(m.calls[0].attachments[0].content) && m.calls[0].attachments[0].content.length > 0);
 });
@@ -358,6 +358,26 @@ test("follow-up requested before send: created right after the initial is sent, 
   assert.equal((await msgRow(msg.id)).sent_at.getTime(), nowDate.getTime());
   await tick({ now: () => nowDate }); // idempotent: nothing more is created
   assert.equal((await pool.query("select 1 from messages where contact_id=$1 and kind='followup'", [contact.id])).rowCount, 1);
+});
+
+test("follow-up with a picked date: created at that instant when the initial is sent, not at sent_at + delay", async () => {
+  const at = new Date(Date.now() + 6 * D);
+  const { contact } = await dueInitial({ followup_requested: true, followup_delay_days: 5 });
+  await pool.query("update contacts set followup_at=$2 where id=$1", [contact.id, at]);
+  await tick();
+  const fu = (await pool.query("select * from messages where contact_id=$1 and kind='followup'", [contact.id])).rows;
+  assert.equal(fu.length, 1);
+  assert.equal(fu[0].scheduled_for.getTime(), at.getTime());
+});
+
+test("follow-up with a picked date earlier than a day after the send: created at sent_at + delay, not minutes after the initial", async () => {
+  const nowDate = new Date();
+  const { contact } = await dueInitial({ followup_requested: true, followup_delay_days: 5 });
+  await pool.query("update contacts set followup_at=$2 where id=$1", [contact.id, new Date(nowDate.getTime() - D)]);
+  await tick({ now: () => nowDate });
+  const fu = (await pool.query("select * from messages where contact_id=$1 and kind='followup'", [contact.id])).rows;
+  assert.equal(fu.length, 1);
+  assert.equal(fu[0].scheduled_for.getTime(), nowDate.getTime() + 5 * D);
 });
 
 test("no follow-up is created when it was not requested", async () => {

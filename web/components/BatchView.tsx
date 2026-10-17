@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Trash2 } from "lucide-react";
@@ -9,6 +9,7 @@ import { plural } from "@/lib/format";
 import type { Resume, SendWindowInfo, UploadResult } from "@/lib/types";
 import { BatchScheduler } from "./BatchScheduler";
 import { DeleteDialog } from "./DeleteDialog";
+import { FollowupBulkBar } from "./FollowupBulkBar";
 import { Notice } from "./Notice";
 import { PageHeader } from "./PageHeader";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,8 @@ export function BatchView({ id }: { id: string }) {
   const [resumes, setResumes] = useState<Resume[]>([]);
   const [sendWindow, setSendWindow] = useState<SendWindowInfo | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [tick, setTick] = useState(0);
+  const reload = useCallback(() => setTick((t) => t + 1), []);
   const router = useRouter();
 
   useEffect(() => {
@@ -32,6 +35,13 @@ export function BatchView({ id }: { id: string }) {
       },
       (err) => live && setError(err instanceof ApiError ? err.message : "Could not load this batch. Try again."),
     );
+    return () => {
+      live = false;
+    };
+  }, [id, tick]);
+
+  useEffect(() => {
+    let live = true;
     api.listResumes().then((r) => live && setResumes(r), () => {});
     api.getSendWindow().then((w) => live && setSendWindow(w), () => {});
     return () => {
@@ -95,6 +105,9 @@ export function BatchView({ id }: { id: string }) {
         perform={(force) => api.deleteBatch(id, force)}
         onDeleted={() => router.push("/contacts")}
       />
+      <div className="mb-5">
+        <FollowupBulkBar key={sendWindow?.window?.tz} batchId={id} batchName={batch.batch.name} tz={sendWindow?.window?.tz || undefined} onApplied={reload} />
+      </div>
       <BatchScheduler upload={batch} resumes={resumes} sendWindow={sendWindow} reopened />
     </div>
   );
