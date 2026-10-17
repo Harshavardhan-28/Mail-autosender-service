@@ -48,7 +48,7 @@ const uniqueViolation = (err, index) => err?.code === "23505" && String(err.cons
 export async function listResumes(pool) {
   const { rows } = await pool.query(
     `SELECT r.*,
-            (SELECT count(*)::int FROM messages m WHERE m.resume_id = r.id AND m.state = ANY($1::text[])) AS pending,
+            (SELECT count(*)::int FROM messages m WHERE m.resume_id = r.id AND m.kind = 'initial' AND m.state = ANY($1::text[])) AS pending,
             (SELECT count(*)::int FROM batches b WHERE b.resume_id = r.id) AS batch_count,
             (SELECT count(*)::int FROM contacts c WHERE c.resume_id = r.id) AS contact_count
        FROM resumes r WHERE r.deleted_at IS NULL
@@ -118,14 +118,14 @@ export async function updateResume(pool, id, { displayName, isDefault }) {
   }
 }
 
-// Soft delete. Refused while a message that has not been sent yet is going to attach it. The storage
+// Soft delete. Refused while an initial that has not been sent yet is going to attach it (follow-ups carry no resume). The storage
 // object is removed only if no message at all references it (a follow-up created later copies the
 // initial's snapshot and must still find its bytes).
 export async function deleteResume(pool, storage, id) {
   const { key, removable } = await inTx(pool, async (db) => {
     const cur = await db.query("SELECT * FROM resumes WHERE id = $1 AND deleted_at IS NULL FOR UPDATE", [id]);
     if (!cur.rowCount) throw new HttpError(404, "Resume not found");
-    const pending = await db.query("SELECT count(*)::int AS n FROM messages WHERE resume_id = $1 AND state = ANY($2::text[])", [id, PENDING_STATES]);
+    const pending = await db.query("SELECT count(*)::int AS n FROM messages WHERE resume_id = $1 AND kind = 'initial' AND state = ANY($2::text[])", [id, PENDING_STATES]);
     const n = pending.rows[0].n;
     if (n > 0) {
       throw new HttpError(409, `This resume is attached to ${n} message${n === 1 ? "" : "s"} that ${n === 1 ? "has" : "have"} not been sent yet. Cancel or send ${n === 1 ? "it" : "them"} first.`, { pendingMessages: n });

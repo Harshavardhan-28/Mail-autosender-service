@@ -110,7 +110,7 @@ export async function getMail(pool, id, { config = {}, now = new Date() } = {}) 
     ...serializeMail(row),
     subject: preview.subject,
     body: preview.text,
-    attachment: attachments.get(row.c_id) ?? null,
+    attachment: row.kind === "followup" ? null : (attachments.get(row.c_id) ?? null), // follow-ups carry no resume
     messageId: row.message_id,
     threadedWith: initial?.rows[0]?.id ?? null,
     related: other ? { id: other.id, kind: other.kind, state: other.state } : null,

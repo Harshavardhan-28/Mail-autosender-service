@@ -164,7 +164,8 @@ async function processMessage({ pool, mailer, config, sendTimeoutMs, resumeFetch
       failure = err; // classified as a pre-send (retryable) failure; nothing is handed to SMTP
     }
     let attachments = [];
-    if (!failure) {
+    // The resume goes only with the initial; a follow-up is a short nudge in the same thread.
+    if (!failure && message.kind === "initial") {
       try {
         // Pre-send, like the signature: the snapshotted resume (or the legacy file) is read here so any
         // failure is a hold and nothing is handed to SMTP without it.

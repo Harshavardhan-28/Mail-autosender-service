@@ -146,6 +146,20 @@ test("detail: follow-up uses template and followup_text override, threads to ini
   assert.match((await c.get(`/api/mails/${msgs.fuA.id}`)).json.mail.body, /Custom nudge/);
 });
 
+test("detail: a follow-up shows no attachment even when the initial carries a resume", async () => {
+  const { rows } = await t.pool.query(
+    "INSERT INTO resumes(display_name, file_name, storage_key, generation, size_bytes, sha256) VALUES ('CV', 'cv.pdf', 'k-detail', '1', 10, 'x') RETURNING id",
+  );
+  await t.pool.query("UPDATE messages SET resume_id = $1 WHERE id = ANY($2::uuid[])", [rows[0].id, [msgs.sentA.id, msgs.fuA.id]]);
+  try {
+    assert.equal((await c.get(`/api/mails/${msgs.sentA.id}`)).json.mail.attachment.displayName, "CV");
+    assert.equal((await c.get(`/api/mails/${msgs.fuA.id}`)).json.mail.attachment, null);
+  } finally {
+    await t.pool.query("UPDATE messages SET resume_id = NULL WHERE resume_id = $1", [rows[0].id]);
+    await t.pool.query("DELETE FROM resumes WHERE id = $1", [rows[0].id]);
+  }
+});
+
 test("detail: needs_review plus contact-level reply events in timeline", async () => {
   await t.pool.query("INSERT INTO events(contact_id, type, meta) VALUES ($1,'needs_review',$2), ($1,'replied','{}'), ($1,'opted_out','{}'), ($1,'send_failed',$3)", [
     contacts[5].id,

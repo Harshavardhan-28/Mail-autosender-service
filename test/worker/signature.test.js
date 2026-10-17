@@ -54,14 +54,17 @@ test("real send path: initial mail carries the signature HTML and the resume PDF
   assertSignedWithResume(smtp.state.bodies[0]);
 });
 
-test("real send path: follow-up mail also carries the signature HTML and the resume PDF", async () => {
+test("real send path: follow-up mail carries the signature HTML but no resume attachment", async () => {
   const email = "sig2@example.com";
   const { contacts } = await seedBatch(pool, [email], { overrides: { [email]: { status: "sent", followup_requested: true } } });
   await addMessage(pool, contacts[0].id, { state: "sent", sentAt: new Date(Date.now() - 864e5), messageId: "<i@x>" });
   await addMessage(pool, contacts[0].id, { kind: "followup" });
   const out = await tick();
   assert.equal(out.sent, 1);
-  assertSignedWithResume(smtp.state.bodies[0]);
+  const body = decode(smtp.state.bodies[0]);
+  assert.ok(body.includes("<strong>Test Signer</strong>"), "signature name is in the body");
+  assert.ok(body.includes("example.com/portfolio-fixture"), "signature html is in the body");
+  assert.doesNotMatch(body, /Content-Disposition: attachment/i, "no attachment on a follow-up");
 });
 
 test("the batch preview endpoint shows the signature", async () => {

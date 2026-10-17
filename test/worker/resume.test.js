@@ -105,24 +105,20 @@ test("a real send carries the snapshotted library resume as a true PDF attachmen
   assert.equal((await contactRow(contact.id)).status, "sent");
 });
 
-test("the follow-up carries the initial's snapshot, even after the default resume was replaced", async () => {
+test("the follow-up carries no attachment (the resume goes only with the initial) and never fetches it", async () => {
   const first = await addResume("First", "first");
-  const { contact, msg } = await dueWith(first, { followup: true });
+  const { contact } = await dueWith(first, { followup: true });
   assert.equal((await tick()).sent, 1);
+  assert.equal(attachmentsOf(smtp.state.bodies[0]).length, 1, "the initial still carries the resume");
   const fu = (await pool.query("select * from messages where contact_id=$1 and kind='followup'", [contact.id])).rows[0];
-  assert.equal(fu.resume_id, first.id, "copied at creation");
-  // The library moves on: a new default, the old resume soft-deleted (allowed: nothing pending uses it... except this follow-up).
-  const second = await addResume("Second", "second");
-  await pool.query("update resumes set is_default=false where is_default");
-  await pool.query("update resumes set is_default=true where id=$1", [second.id]);
+  // Even with the resume object gone from storage, the follow-up is not held: nothing is fetched for it.
+  await unlink(path.join(dir, first.key)).catch(() => {});
   await pool.query("update messages set scheduled_for = now() - interval '1 minute' where id=$1", [fu.id]);
   smtp.state.bodies.length = 0;
   assert.equal((await tick()).sent, 1);
-  const atts = attachmentsOf(smtp.state.bodies[0]);
-  assert.equal(atts.length, 1);
-  assert.equal(atts[0].filename, first.fileName);
-  assert.ok(atts[0].content.equals(first.buffer), "still the first resume's bytes");
-  assert.equal(msg.id === fu.id, false);
+  assert.equal(attachmentsOf(smtp.state.bodies[0]).length, 0);
+  assert.equal((await msgRow(fu.id)).state, "sent");
+  assert.equal(await holdRow(), null);
 });
 
 test("a soft-deleted resume whose object remains still sends (history is explainable and follow-ups keep working)", async () => {
